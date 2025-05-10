@@ -1,0 +1,74 @@
+syntax = "proto3";
+
+package event;
+option go_package = "github.com/rx3lixir/event-service/event-grpc/gen/go";
+
+import "google/protobuf/timestamp.proto";
+
+service EventService {
+  rpc GetEvent(GetEventRequest) returns (EventResponse);
+  rpc GetEvents(GetEventsRequest) returns (GetEventsResponse);
+  rpc CreateEvent(CreateEventRequest) returns (EventResponse);
+  rpc UpdateEvent(UpdateEventRequest) returns (EventResponse);
+  rpc DeleteEvent(DeleteEventRequest) returns (DeleteEventResponse);
+  rpc GetEventsByCategory(GetEventsByCategoryRequest)
+      returns (GetEventsResponse);
+}
+
+message GetEventRequest { int32 id = 1; }
+
+message GetEventsRequest { repeated GetEventRequest events = 1; }
+
+message GetEventsByCategoryRequest { int32 category_id = 1; }
+
+message CreateEventRequest {
+  string name = 1;
+  string description = 2;
+  int32 category_id = 3;
+  google.protobuf.Timestamp date = 4;
+  google.protobuf.Timestamp time = 5;
+  string location = 6;
+  double price = 7;
+  double rating = 8;
+  string image = 9;
+  string source = 10;
+}
+
+message UpdateEventRequest {
+  int32 id = 1;
+  string name = 2;
+  string description = 3;
+  int32 category_id = 4;
+  google.protobuf.Timestamp date = 5;
+  google.protobuf.Timestamp time = 6;
+  string location = 7;
+  double price = 8;
+  double rating = 9;
+  string image = 10;
+  string source = 11;
+}
+
+message DeleteEventRequest { int32 id = 1; }
+
+message DeleteEventResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message EventResponse {
+  int32 id = 1;
+  string name = 2;
+  string description = 3;
+  int32 category_id = 4;
+  google.protobuf.Timestamp date = 5;
+  google.protobuf.Timestamp time = 6;
+  string location = 7;
+  double price = 8;
+  double rating = 9;
+  string image = 10;
+  string source = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message GetEventsResponse { repeated EventResponse events = 1; }

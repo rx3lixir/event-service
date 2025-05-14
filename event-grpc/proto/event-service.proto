@@ -1,74 +1,89 @@
 syntax = "proto3";
 
 package event;
+
 option go_package = "github.com/rx3lixir/event-service/event-grpc/gen/go";
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto"; // Для DeleteEvent ответа
 
-service EventService {
-  rpc GetEvent(GetEventRequest) returns (EventResponse);
-  rpc GetEvents(GetEventsRequest) returns (GetEventsResponse);
-  rpc CreateEvent(CreateEventRequest) returns (EventResponse);
-  rpc UpdateEvent(UpdateEventRequest) returns (EventResponse);
-  rpc DeleteEvent(DeleteEventRequest) returns (DeleteEventResponse);
-  rpc GetEventsByCategory(GetEventsByCategoryRequest)
-      returns (GetEventsResponse);
-}
-
-message GetEventRequest { int32 id = 1; }
-
-message GetEventsRequest { repeated GetEventRequest events = 1; }
-
-message GetEventsByCategoryRequest { int32 category_id = 1; }
-
-message CreateEventRequest {
+// Сообщение для создания события (без ID, CreatedAt, UpdatedAt)
+message CreateEventReq {
   string name = 1;
   string description = 2;
-  int32 category_id = 3;
-  google.protobuf.Timestamp date = 4;
-  google.protobuf.Timestamp time = 5;
+  int64 categoryID = 3;
+  string time = 4; // Представление времени как строки
+  string date = 5; // Представление даты как строки
   string location = 6;
-  double price = 7;
-  double rating = 8;
+  float price = 7;
+  string image = 8;  // URL или идентификатор изображения
+  string source = 9; // Источник события
+}
+
+// Сообщение для обновления события
+message UpdateEventReq {
+  int64 id = 1; // ID обновляемого события
+  string name = 2;
+  string description = 3;
+  int64 categoryID = 4;
+  string time = 5;
+  string date = 6;
+  string location = 7;
+  float price = 8;
   string image = 9;
   string source = 10;
+  // CreatedAt не обновляется
+  // UpdatedAt будет обновлено сервером автоматически
 }
 
-message UpdateEventRequest {
-  int32 id = 1;
+// Запрос на получение события по ID
+message GetEventReq { int64 id = 1; }
+
+// Запрос на удаление события по ID
+message DeleteEventReq { int64 id = 1; }
+
+// Запрос на получение списка событий (может включать фильтры)
+// Оставляем общим, но можно сделать более специфичным для фильтрации.
+// Например, добавить опциональные поля для фильтрации.
+message ListEventsReq {
+  // Поля для фильтрации (опционально)
+  optional int64 categoryID = 1;
+  optional string date = 2; // Фильтр по дате
+  // Можно добавить поля для пагинации:
+  // optional int32 page_size = 3;
+  // optional string page_token = 4;
+}
+
+// Ответ с данными события
+message EventRes {
+  int64 id = 1;
   string name = 2;
   string description = 3;
-  int32 category_id = 4;
-  google.protobuf.Timestamp date = 5;
-  google.protobuf.Timestamp time = 6;
+  int64 categoryID = 4;
+  string time = 5;
+  string date = 6;
   string location = 7;
-  double price = 8;
-  double rating = 9;
-  string image = 10;
-  string source = 11;
+  float price = 8;
+  string image = 9;
+  string source = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp updated_at =
+      12; // Может быть null, если не обновлялось и БД это допускает
 }
 
-message DeleteEventRequest { int32 id = 1; }
-
-message DeleteEventResponse {
-  bool success = 1;
-  string message = 2;
+// Ответ со списком событий
+message ListEventsRes {
+  repeated EventRes events = 1;
+  // Можно добавить поля для пагинации:
+  // string next_page_token = 2;
+  // int32 total_size = 3;
 }
 
-message EventResponse {
-  int32 id = 1;
-  string name = 2;
-  string description = 3;
-  int32 category_id = 4;
-  google.protobuf.Timestamp date = 5;
-  google.protobuf.Timestamp time = 6;
-  string location = 7;
-  double price = 8;
-  double rating = 9;
-  string image = 10;
-  string source = 11;
-  google.protobuf.Timestamp created_at = 12;
-  google.protobuf.Timestamp updated_at = 13;
+service EventService {
+  rpc CreateEvent(CreateEventReq) returns (EventRes);
+  rpc GetEvent(GetEventReq) returns (EventRes);
+  rpc ListEvents(ListEventsReq) returns (ListEventsRes); // Изменен запрос
+  rpc UpdateEvent(UpdateEventReq) returns (EventRes);
+  rpc DeleteEvent(DeleteEventReq)
+      returns (google.protobuf.Empty); // Ответ изменен на Empty
 }
-
-message GetEventsResponse { repeated EventResponse events = 1; }

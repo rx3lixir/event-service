@@ -1,0 +1,10 @@
+service_params:
+  env: dev
+db_params:
+  username: rx3lixir
+  password: password
+  db_name: event-storer
+  port: 5432
+  connect_timeout: 10s
+server_params:
+  address: 0.0.0.0:3000

@@ -8,21 +8,15 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ianschenck/envflag"
 	pb "github.com/rx3lixir/event-service/event-grpc/gen/go"
 	"github.com/rx3lixir/event-service/event-grpc/server"
+	"github.com/rx3lixir/event-service/internal/config"
 	"github.com/rx3lixir/event-service/internal/db"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
 
 func main() {
-	var (
-		dbURL       = envflag.String("DB_URL", "postgres://rx3lixir:password@localhost:5432/aggregator?sslmode=disable", "Database connection URL")
-		grpcSvcAddr = envflag.String("GRPC_PORT", "0.0.0.0:9091", "gRPC server address")
-	)
-	envflag.Parse()
-
 	// Настраиваем логирование
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -41,8 +35,15 @@ func main() {
 		cancel()
 	}()
 
+	c, err := config.New()
+	if err != nil {
+		slog.Error("error creating config file", "error", err)
+		os.Exit(1)
+
+	}
+
 	// Создаем пул соединений с базой данных
-	pool, err := db.CreatePostgresPool(ctx, *dbURL)
+	pool, err := db.CreatePostgresPool(ctx, c.DB.DSN())
 	if err != nil {
 		slog.Error("Failed to create postgres pool", "error", err)
 		os.Exit(1)
@@ -64,13 +65,13 @@ func main() {
 	reflection.Register(grpcServer)
 
 	// Запускаем gRPC сервер
-	listener, err := net.Listen("tcp", *grpcSvcAddr)
+	listener, err := net.Listen("tcp", c.Server.Address)
 	if err != nil {
 		slog.Error("Failed to start listener", "error", err)
 		os.Exit(1)
 	}
 
-	slog.Info("Server is listening", "address", *grpcSvcAddr)
+	slog.Info("Server is listening", "address", c.Server.Address)
 
 	// Запускаем сервер в горутине
 	serverError := make(chan error, 1)

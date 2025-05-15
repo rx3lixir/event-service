@@ -4,7 +4,7 @@
 
 BINARY_NAME=event-service
 MIGRATIONS_PATH=internal/db/migrations
-DB_URL=postgres://rx3lixir:password@localhost:5432/aggregator?sslmode=disable
+DB_URL=postgres://rx3lixir:password@localhost:5432/event-storer?sslmode=disable
 
 # Auto-load .env file if it exists
 ifneq (,$(wildcard .env))

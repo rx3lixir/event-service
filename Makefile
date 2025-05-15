@@ -24,7 +24,7 @@ all: build ## Default build command
 
 build: ## Build the binary
 	@echo "🔨 Building..."
-	go build -o ./bin/$(BINARY_NAME) ./cmd/api/main.go
+	go build -o ./bin/$(BINARY_NAME) ./cmd/event/main.go
 
 run: build ## Build and run the app
 	@echo "🚀 Running..."

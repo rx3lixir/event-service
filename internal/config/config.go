@@ -12,14 +12,16 @@ import (
 
 // Константы для ключей конфигурации
 const (
-	envKey            = "service_params.env"
+	envKey = "service_params.env"
+
 	usernameKey       = "db_params.username"
 	passwordKey       = "db_params.password"
 	dbNameKey         = "db_params.db_name"
 	hostKey           = "db_params.host"
 	portKey           = "db_params.port"
 	connectTimeoutKey = "db_params.connect_timeout"
-	serviceAddress    = "server_params.address"
+
+	serviceAddress = "server_params.address"
 )
 
 // AppConfig представляет конфигурацию всего приложения

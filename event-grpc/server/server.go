@@ -60,27 +60,16 @@ func (s *Server) GetEvent(ctx context.Context, req *eventPb.GetEventReq) (*event
 }
 
 func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*eventPb.ListEventsRes, error) {
-	slog.Info("ListEvents request received",
-		"has_category_filter", req.CategoryID != nil,
-		"has_date_filter", req.Date != nil)
+	slog.Info("ListEvents request received")
 
 	var events []*db.Event
 	var err error
 
-	// Если указана категория, фильтруем по ней
-	if req.CategoryID != nil {
-		events, err = s.storer.GetEventsByCategory(ctx, req.GetCategoryID())
-		if err != nil {
-			slog.Error("Failed to get events by category", "category_id", req.GetCategoryID(), "error", err)
-			return nil, wrapError(err)
-		}
-	} else {
-		// Иначе возвращаем все события
-		events, err = s.storer.GetEvents(ctx)
-		if err != nil {
-			slog.Error("Failed to get all events", "error", err)
-			return nil, wrapError(err)
-		}
+	// Возвращаем события
+	events, err = s.storer.GetEvents(ctx)
+	if err != nil {
+		slog.Error("Failed to get all events", "error", err)
+		return nil, wrapError(err)
 	}
 
 	// TODO: фильтрация по дате и остальные фильтры

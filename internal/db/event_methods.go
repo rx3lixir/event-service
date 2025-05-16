@@ -14,20 +14,20 @@ const (
 	// created_at должно иметь DEFAULT CURRENT_TIMESTAMP в схеме БД,
 	// updated_at может быть NULL или DEFAULT CURRENT_TIMESTAMP и обновляться через NOW() в UPDATE.
 	// Количество VALUES ($1-$9) должно соответствовать количеству передаваемых полей.
-	createEventQuery = `INSERT INTO events (name, description, category_id, date, "time", location, price, image, source) 
+	createEventQuery = `INSERT INTO events (name, description, category_id, date, time, location, price, image, source) 
 						VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
 						RETURNING id, created_at, updated_at`
 
 	// UPDATE events SET ..., updated_at = NOW() WHERE id = $N RETURNING updated_at
 	// Количество SET полей + id ($1-$10)
 	updateEventQuery = `UPDATE events 
-						SET name = $1, description = $2, category_id = $3, date = $4, "time" = $5, 
+						SET name = $1, description = $2, category_id = $3, date = $4, time = $5, 
 						    location = $6, price = $7, image = $8, source = $9, updated_at = NOW() 
 						WHERE id = $10 
 						RETURNING updated_at` // Можно возвращать все поля: RETURNING id, name, ..., updated_at
 
 	// SELECT запросы
-	getEventsQueryBaseFields = `SELECT id, name, description, category_id, date, "time", location, price, image, source, created_at, updated_at FROM events`
+	getEventsQueryBaseFields = `SELECT id, name, description, category_id, date, time, location, price, image, source, created_at, updated_at FROM events`
 	getEventsQuery           = getEventsQueryBaseFields
 	getEventByIdQuery        = getEventsQueryBaseFields + ` WHERE id = $1`
 	getEventsByCategoryQuery = getEventsQueryBaseFields + ` WHERE category_id = $1`

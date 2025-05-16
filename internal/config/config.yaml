@@ -7,4 +7,4 @@ db_params:
   port: 5432
   connect_timeout: 10s
 server_params:
-  address: 0.0.0.0:3000
+  address: 0.0.0.0:9091

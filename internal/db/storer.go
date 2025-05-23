@@ -36,6 +36,12 @@ type EventStore interface {
 	GetEventByID(ctx context.Context, id int64) (*Event, error)
 	DeleteEvent(ctx context.Context, id int64) (*Event, error)
 	GetEventsByCategory(ctx context.Context, categoryID int64) ([]*Event, error)
+
+	CreateCategory(ctx context.Context, category *Category) error
+	ListCategories(parentCtx context.Context) ([]*Category, error)
+	GetCategoryByID(parentCtx context.Context, id int) (*Category, error)
+	UpdateCategory(parentCtx context.Context, category *Category) error
+	DeleteCategory(parentCtx context.Context, id int) error
 }
 
 // CreatePostgresPool создает и проверяет пул соединений к PostgreSQL.

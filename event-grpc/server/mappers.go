@@ -76,25 +76,40 @@ func DBEventsToProtoEventsList(events []*db.Event) []*eventPb.EventRes {
 	return protoEvents
 }
 
-// Пример использования ListEventsReq для формирования параметров фильтрации (если нужно)
-// Эта функция будет в вашем gRPC хендлере
-/*
-func GetFilterParamsFromListEventsReq(req *eventPb.ListEventsReq) map[string]interface{} {
-	filters := make(map[string]interface{})
-	if req.GetCategoryID() > 0 { // proto3 optional int64 будет 0, если не установлено
-		filters["category_id"] = req.GetCategoryID()
+// ProtoToCreateCategoryParams конвертирует CreateCategoryReq из gRPC в db.CreateCategoryReq.
+func ProtoToCreateCategoryParams(req *eventPb.CreateCategoryReq) *db.CreateCategoryReq {
+	return &db.CreateCategoryReq{
+		Name: req.GetName(),
 	}
-	if req.HascCategoryID() { // Для proto3 optional полей есть Has методы
-	    filters["category_id"] = req.GetCategoryID()
-	}
-
-
-	if req.GetDate() != "" { // proto3 optional string будет "", если не установлено
-		filters["date"] = req.GetDate()
-	}
-    if req.HasDate() {
-        filters["date"] = req.GetDate()
-    }
-	return filters
 }
-*/
+
+// ProtoToUpdateCategoryParams получает ID и имя категории из запроса
+func ProtoToUpdateCategoryParams(req *eventPb.UpdateCategoryReq) (int, string) {
+	return int(req.GetId()), req.GetName()
+}
+
+// DBCategoryToProtoCategoryRes конвертирует db.Category в CategoryRes для gRPC ответа.
+func DBCategoryToProtoCategoryRes(category *db.Category) *eventPb.CategoryRes {
+	if category == nil {
+		return nil
+	}
+
+	return &eventPb.CategoryRes{
+		Id:        int32(category.Id),
+		Name:      category.Name,
+		CreatedAt: timestamppb.New(category.CreatedAt),
+		UpdatedAt: timestamppb.New(category.UpdatedAt),
+	}
+}
+
+// DBCategoriesToProtoList конвертирует срез []*db.Category в []*eventPb.CategoryRes.
+func DBCategoriesToProtoList(categories []*db.Category) []*eventPb.CategoryRes {
+	if categories == nil {
+		return nil
+	}
+	protoCategories := make([]*eventPb.CategoryRes, 0, len(categories))
+	for _, dbCategory := range categories {
+		protoCategories = append(protoCategories, DBCategoryToProtoCategoryRes(dbCategory))
+	}
+	return protoCategories
+}

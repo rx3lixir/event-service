@@ -99,8 +99,9 @@ func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*e
 	var events []*db.Event
 	var err error
 
-	// Возвращаем события
+	// Иначе возвращаем все события
 	events, err = s.storer.GetEvents(ctx)
+
 	if err != nil {
 		s.log.Error("failed to list events",
 			"method", "ListEvents",
@@ -191,6 +192,203 @@ func (s *Server) DeleteEvent(ctx context.Context, req *eventPb.DeleteEventReq) (
 	)
 
 	return &emptypb.Empty{}, nil
+}
+
+// CreateCategory создает новую категорию.
+func (s *Server) CreateCategory(ctx context.Context, req *eventPb.CreateCategoryReq) (*eventPb.CategoryRes, error) {
+	s.log.Info("starting create category",
+		"method", "CreateCategory",
+		"category_name", req.GetName(),
+	)
+
+	// Валидация запроса
+	if err := validateCreateCategoryReq(req); err != nil {
+		s.log.Error("invalid create category request",
+			"method", "CreateCategory",
+			"error", err,
+			"name", req.GetName(),
+		)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	params := ProtoToCreateCategoryParams(req)
+	categoryToCreate := db.NewCategory(params)
+
+	err := s.storer.CreateCategory(ctx, categoryToCreate)
+	if err != nil {
+		s.log.Error("failed to create category",
+			"method", "CreateCategory",
+			"error", err,
+			"category_name", req.GetName(),
+		)
+		return nil, wrapError(err)
+	}
+
+	s.log.Info("category created successfully",
+		"method", "CreateCategory",
+		"category_id", categoryToCreate.Id,
+		"name", categoryToCreate.Name,
+	)
+	return DBCategoryToProtoCategoryRes(categoryToCreate), nil
+}
+
+// GetCategory получает категорию по ID.
+func (s *Server) GetCategory(ctx context.Context, req *eventPb.GetCategoryReq) (*eventPb.CategoryRes, error) {
+	s.log.Info("starting get category",
+		"method", "GetCategory",
+		"category_id", req.GetId(),
+	)
+
+	category, err := s.storer.GetCategoryByID(ctx, int(req.GetId()))
+	if err != nil {
+		s.log.Error("failed to get category",
+			"method", "GetCategory",
+			"category_id", req.GetId(),
+			"error", err,
+		)
+		return nil, wrapError(err)
+	}
+
+	s.log.Debug("category retrieved successfully",
+		"method", "GetCategory",
+		"category_id", category.Id,
+		"name", category.Name,
+	)
+
+	return DBCategoryToProtoCategoryRes(category), nil
+}
+
+// ListCategories возвращает список всех категорий.
+func (s *Server) ListCategories(ctx context.Context, req *eventPb.ListCategoriesReq) (*eventPb.ListCategoriesRes, error) {
+	s.log.Info("starting list categories",
+		"method", "ListCategories",
+	)
+
+	categories, err := s.storer.ListCategories(ctx)
+	if err != nil {
+		s.log.Error("failed to list categories",
+			"method", "ListCategories",
+			"error", err,
+		)
+		return nil, wrapError(err)
+	}
+
+	s.log.Info("categories retrieved successfully",
+		"count", len(categories),
+	)
+
+	protoCategories := DBCategoriesToProtoList(categories)
+	return &eventPb.ListCategoriesRes{
+		Categories: protoCategories,
+	}, nil
+}
+
+// UpdateCategory обновляет существующую категорию.
+func (s *Server) UpdateCategory(ctx context.Context, req *eventPb.UpdateCategoryReq) (*eventPb.CategoryRes, error) {
+	s.log.Info("starting update category",
+		"method", "UpdateCategory",
+		"category_id", req.GetId(),
+	)
+
+	// Валидация запроса
+	if err := validateUpdateCategoryReq(req); err != nil {
+		s.log.Error("invalid update category request",
+			"method", "UpdateCategory",
+			"category_id", req.GetId(),
+			"error", err,
+		)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// Получаем ID и имя категории из запроса
+	id, name := ProtoToUpdateCategoryParams(req)
+
+	// Получаем текущую категорию
+	currentCategory, err := s.storer.GetCategoryByID(ctx, id)
+	if err != nil {
+		s.log.Error("failed to get category for update",
+			"method", "UpdateCategory",
+			"category_id", id,
+			"error", err,
+		)
+		return nil, wrapError(err)
+	}
+
+	// Обновляем имя
+	currentCategory.Name = name
+
+	// Обновляем в базе
+	err = s.storer.UpdateCategory(ctx, currentCategory)
+	if err != nil {
+		s.log.Error("failed to update category",
+			"id", id,
+			"error", err,
+		)
+		return nil, wrapError(err)
+	}
+
+	s.log.Info("category updated successfully",
+		"method", "UpdateCategory",
+		"category_id", currentCategory.Id,
+	)
+
+	return DBCategoryToProtoCategoryRes(currentCategory), nil
+}
+
+// DeleteCategory удаляет категорию по ID.
+func (s *Server) DeleteCategory(ctx context.Context, req *eventPb.DeleteCategoryReq) (*emptypb.Empty, error) {
+	s.log.Info("starting delete category",
+		"method", "DeleteCategory",
+		"category_id", req.GetId(),
+	)
+
+	// Проверяем, существует ли категория (опционально)
+	_, err := s.storer.GetCategoryByID(ctx, int(req.GetId()))
+	if err != nil {
+		s.log.Error("failed to get category for deletion",
+			"method", "DeleteCategory",
+			"category_id", req.GetId(),
+			"error", err,
+		)
+		return nil, wrapError(err)
+	}
+
+	// Удаляем категорию
+	err = s.storer.DeleteCategory(ctx, int(req.GetId()))
+	if err != nil {
+		s.log.Error("failed to delete category",
+			"method", "DeleteCategory",
+			"category_id", req.GetId(),
+			"error", err,
+		)
+		return nil, wrapError(err)
+	}
+
+	s.log.Info("category deleted successfully",
+		"method", "DeleteCategory",
+		"category_id", req.GetId(),
+	)
+
+	return &emptypb.Empty{}, nil
+}
+
+// validateCreateCategoryReq проверяет корректность запроса на создание категории.
+func validateCreateCategoryReq(req *eventPb.CreateCategoryReq) error {
+	if req.GetName() == "" {
+		return errors.New("category name is required")
+	}
+	return nil
+}
+
+// validateUpdateCategoryReq проверяет корректность запроса на обновление категории.
+func validateUpdateCategoryReq(req *eventPb.UpdateCategoryReq) error {
+	if req.GetId() <= 0 {
+		return errors.New("invalid category ID")
+	}
+	if req.GetName() == "" {
+		return errors.New("category name is required")
+	}
+	return nil
 }
 
 // wrapError преобразует ошибки БД в gRPC ошибки со статусами.

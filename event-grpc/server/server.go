@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	eventPb "github.com/rx3lixir/event-service/event-grpc/gen/go"
 	"github.com/rx3lixir/event-service/internal/db"
-	"github.com/rx3lixir/event-service/internal/logger"
+	"github.com/rx3lixir/event-service/pkg/logger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"

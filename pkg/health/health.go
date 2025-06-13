@@ -2,9 +2,7 @@ package health
 
 import (
 	"context"
-	"encoding/json"
 
-	"net/http"
 	"sync"
 	"time"
 )
@@ -63,21 +61,7 @@ func New(service, version string, opts ...Option) *Health {
 		timeout:  5 * time.Second,
 	}
 
-	for _, opt := range opts {
-		opt(h)
-	}
-
 	return h
-}
-
-// Option функция для настройки Health
-type Option func(*Health)
-
-// WithTimeout устанавливает таймаут для проверок
-func WithTimeout(timeout time.Duration) Option {
-	return func(h *Health) {
-		h.timeout = timeout
-	}
 }
 
 // AddCheckFunc добавляет проверку как функцию
@@ -165,31 +149,4 @@ func (h *Health) safeCheck(ctx context.Context, checker Checker) (result CheckRe
 	}()
 
 	return checker.Check(ctx)
-}
-
-// Handler возвращает HTTP handler для health эндпоинта
-func (h *Health) Handler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		response := h.Check(r.Context())
-
-		// Устанавливаем статус код
-		statusCode := http.StatusOK
-		if response.Status == StatusDown {
-			statusCode = http.StatusServiceUnavailable
-		}
-
-		// Отправляем ответ
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(statusCode)
-		json.NewEncoder(w).Encode(response)
-	}
-}
-
-// ReadyHandler простой handler для проверки готовности
-func (h *Health) ReadyHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		// Быстрая проверка - сервис запущен и готов принимать запросы
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("READY"))
-	}
 }

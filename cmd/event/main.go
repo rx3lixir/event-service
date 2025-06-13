@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -15,8 +13,8 @@ import (
 	"github.com/rx3lixir/event-service/event-grpc/server"
 	"github.com/rx3lixir/event-service/internal/config"
 	"github.com/rx3lixir/event-service/internal/db"
-	"github.com/rx3lixir/event-service/internal/logger"
 	"github.com/rx3lixir/event-service/pkg/health"
+	"github.com/rx3lixir/event-service/pkg/logger"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -33,7 +31,6 @@ func main() {
 	logger.Init(c.Service.Env)
 	defer logger.Close()
 
-	// Создаем экземпляр логгера для передачи компонентам
 	log := logger.NewLogger()
 
 	// Создаем контекст, который можно отменить при получении сигнала остановки
@@ -84,69 +81,47 @@ func main() {
 
 	log.Info("Server is listening", "address", c.Server.Address)
 
-	// Настраиваем health checks
-	healthChecker := health.New("event-service", "1.0.0", health.WithTimeout(3*time.Second))
+	// Создаем HealthCheck сервер
+	healthServer := health.NewServer(pool, log,
+		health.WithServiceName("event-service"),
+		health.WithVersion("1.0.0"),
+		health.WithPort(":8081"),
+		health.WithTimeout(5*time.Second),
+		health.WithRequiredTables("events", "categories"),
+	)
 
-	// Добавляем проверку базы данных
-	healthChecker.AddCheck("database", health.PostgresChecker(pool))
+	// Запускаем серверы
+	errCh := make(chan error, 2)
 
-	// Запускаем HTTP сервер для health checks
-	healthMux := http.NewServeMux()
-	healthMux.HandleFunc("/health", healthChecker.Handler())
-	healthMux.HandleFunc("/ready", healthChecker.ReadyHandler())
-
-	// Добавляем liveness probe (просто отвечает 200 OK)
-	healthMux.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ALIVE"))
-	})
-
-	// HTTP сервер на порту 8081
-	healthServer := &http.Server{
-		Addr:    ":8081",
-		Handler: healthMux,
-	}
-
-	var wg sync.WaitGroup
-
-	// Запускаем HTTP сервер в горутине
-	wg.Add(1)
+	// Health check сервер
 	go func() {
-		defer wg.Done()
-		log.Info("Starting health check server", "address", healthServer.Addr)
-		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error("Health check server error", "error", err)
-		}
+		errCh <- healthServer.Start()
 	}()
 
-	// Запускаем gRPC сервер в горутине
-	wg.Add(1)
-	serverError := make(chan error, 1)
+	// gRPC сервер
 	go func() {
-		defer wg.Done()
-		serverError <- grpcServer.Serve(listener)
+		errCh <- grpcServer.Serve(listener)
 	}()
 
-	// Ждем либо завершения контекста (по сигналу), либо ошибки сервера
+	// Ждем завершения
 	select {
 	case <-signalCh:
 		log.Info("Shutting down gracefully...")
-		cancel()
 
 		// Останавливаем серверы
 		grpcServer.GracefulStop()
 		if err := healthServer.Shutdown(context.Background()); err != nil {
-			log.Error("HTTP server shutdown error", "error", err)
+			log.Error("Health server shutdown error", "error", err)
 		}
 
-	case err := <-serverError:
+	case err := <-errCh:
 		log.Error("Server error", "error", err)
+
+		grpcServer.GracefulStop()
 		if err := healthServer.Shutdown(context.Background()); err != nil {
-			log.Error("HTTP server shutdown error", "error", err)
+			log.Error("GRPC server shutdown error", "error", err)
 		}
 	}
 
-	// Ждем завершения всех горутин
-	wg.Wait()
 	log.Info("Server stopped gracefully")
 }

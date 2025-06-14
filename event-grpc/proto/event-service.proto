@@ -5,9 +5,13 @@ package event;
 option go_package = "github.com/rx3lixir/event-service/event-grpc/gen/go";
 
 import "google/protobuf/timestamp.proto";
-import "google/protobuf/empty.proto"; // Для DeleteEvent и DeleteCategory ответов
+import "google/protobuf/empty.proto";
 
-// Сообщение для создания события (без ID, CreatedAt, UpdatedAt)
+// ============================================================================
+// СОБЫТИЯ (EVENTS)
+// ============================================================================
+
+// Запрос на создание события (без ID, CreatedAt, UpdatedAt)
 message CreateEventReq {
   string name = 1;
   string description = 2;
@@ -20,7 +24,7 @@ message CreateEventReq {
   string source = 9; // Источник события
 }
 
-// Сообщение для обновления события
+// Запрос на обновление события
 message UpdateEventReq {
   int64 id = 1; // ID обновляемого события
   string name = 2;
@@ -32,8 +36,6 @@ message UpdateEventReq {
   float price = 8;
   string image = 9;
   string source = 10;
-  // CreatedAt не обновляется
-  // UpdatedAt будет обновлено сервером автоматически
 }
 
 // Запрос на получение события по ID
@@ -42,14 +44,24 @@ message GetEventReq { int64 id = 1; }
 // Запрос на удаление события по ID
 message DeleteEventReq { int64 id = 1; }
 
-// Запрос на получение списка событий (может включать фильтры)
+// Запрос на получение списка событий с фильтрами и пагинацией
 message ListEventsReq {
-  // Поля для фильтрации (опционально)
-  optional int64 categoryID = 1;
-  optional string date = 2; // Фильтр по дате
-  // Можно добавить поля для пагинации:
-  // optional int32 page_size = 3;
-  // optional string page_token = 4;
+  // Фильтры
+  repeated int64 categoryIDs = 1;  // Фильтр по категориям
+  optional float min_price = 2;    // Минимальная цена
+  optional float max_price = 3;    // Максимальная цена
+  optional string date_from = 4;   // Дата от (YYYY-MM-DD)
+  optional string date_to = 5;     // Дата до (YYYY-MM-DD)
+  optional string location = 6;    // Фильтр по локации
+  optional string source = 7;      // Фильтр по источнику
+  optional string search_text = 8; // Полнотекстовый поиск
+
+  // Пагинация
+  optional int32 limit = 9;   // Лимит записей
+  optional int32 offset = 10; // Смещение
+
+  // Дополнительные опции
+  optional bool include_count = 11; // Включить общее количество
 }
 
 // Ответ с данными события
@@ -65,19 +77,26 @@ message EventRes {
   string image = 9;
   string source = 10;
   google.protobuf.Timestamp created_at = 11;
-  google.protobuf.Timestamp updated_at =
-      12; // Может быть null, если не обновлялось
+  google.protobuf.Timestamp updated_at = 12;
 }
 
 // Ответ со списком событий
 message ListEventsRes {
   repeated EventRes events = 1;
-  // Можно добавить поля для пагинации:
-  // string next_page_token = 2;
-  // int32 total_size = 3;
+  optional PaginationMeta pagination = 2;
 }
 
-// ---------------- Категории ----------------
+// Мета-информация для пагинации
+message PaginationMeta {
+  int64 total_count = 1; // Общее количество записей
+  int32 limit = 2;       // Лимит на страницу  
+  int32 offset = 3;      // Текущее смещение
+  bool has_more = 4;     // Есть ли еще записи
+}
+
+// ============================================================================
+// КАТЕГОРИИ (CATEGORIES)
+// ============================================================================
 
 // Запрос на создание категории
 message CreateCategoryReq { string name = 1; }
@@ -110,15 +129,19 @@ message CategoryRes {
 // Ответ со списком категорий
 message ListCategoriesRes { repeated CategoryRes categories = 1; }
 
+// ============================================================================
+// СЕРВИС
+// ============================================================================
+
 service EventService {
-  // События
+  // Операции с событиями
   rpc CreateEvent(CreateEventReq) returns (EventRes);
   rpc GetEvent(GetEventReq) returns (EventRes);
   rpc ListEvents(ListEventsReq) returns (ListEventsRes);
   rpc UpdateEvent(UpdateEventReq) returns (EventRes);
   rpc DeleteEvent(DeleteEventReq) returns (google.protobuf.Empty);
 
-  // Категории
+  // Операции с категориями
   rpc CreateCategory(CreateCategoryReq) returns (CategoryRes);
   rpc GetCategory(GetCategoryReq) returns (CategoryRes);
   rpc ListCategories(ListCategoriesReq) returns (ListCategoriesRes);

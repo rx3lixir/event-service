@@ -92,33 +92,84 @@ func (s *Server) GetEvent(ctx context.Context, req *eventPb.GetEventReq) (*event
 }
 
 func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*eventPb.ListEventsRes, error) {
-	s.log.Info("starting list events",
+	s.log.Info("starting list events with filters",
 		"method", "ListEvents",
+		"category_ids", req.GetCategoryIDs(),
+		"min_price", req.GetMinPrice(),
+		"max_price", req.GetMaxPrice(),
+		"date_from", req.GetDateFrom(),
+		"date_to", req.GetDateTo(),
+		"location", req.GetLocation(),
+		"source", req.GetSource(),
+		"search_text", req.GetSearchText(),
+		"limit", req.GetLimit(),
+		"offset", req.GetOffset(),
+		"include_count", req.GetIncludeCount(),
 	)
 
-	var events []*db.Event
-	var err error
-
-	// Иначе возвращаем все события
-	events, err = s.storer.GetEvents(ctx)
-
+	// Вадидация и конвертация gRPC запроса в фильтр
+	filter, err := ProtoToEventFilter(req)
 	if err != nil {
-		s.log.Error("failed to list events",
+		s.log.Error("invalid filter parameters",
 			"method", "ListEvents",
 			"error", err,
 		)
-		return nil, wrapError(err)
+
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	// TODO: фильтрация по дате и остальные фильтры
+	var events []*db.Event
+	var totalCount *int64
 
-	s.log.Info("Events retrieved successfully", "count", len(events))
+	// Ecли клиент запросил общее кол-во осбытий - сичтаем
+	if req.GetIncludeCount() {
+		eventsResult, count, err := s.storer.GetEventsWithFilterAndCount(ctx, filter)
+		if err != nil {
+			s.log.Error("failed to list events with filter and count",
+				"method", "ListEvents",
+				"error", err,
+				"filter", filter,
+			)
+			return nil, wrapError(err)
+		}
+		events = eventsResult
+		totalCount = &count
 
-	// Преобразуем срез событий в protobuf
-	protoEvents := DBEventsToProtoEventsList(events)
-	return &eventPb.ListEventsRes{
-		Events: protoEvents,
-	}, nil
+		s.log.Info("events retrieved successfully with count",
+			"method", "ListEvents",
+			"events_count", len(events),
+			"total_count", count,
+			"has_filters", !filter.IsEmpty(),
+		)
+	} else {
+		// Обычный запрос без подсчета общего количества
+		eventsResult, err := s.storer.GetEventsWithFilter(ctx, filter)
+		if err != nil {
+			s.log.Error("failed to list events with filter",
+				"method", "ListEvents",
+				"error", err,
+				"filter", filter,
+			)
+			return nil, wrapError(err)
+		}
+		events = eventsResult
+
+		s.log.Info("events retrieved successfully",
+			"method", "ListEvents",
+			"events_count", len(events),
+			"has_filters", !filter.IsEmpty(),
+		)
+	}
+
+	// Конвертируем результат в gRPC ответ
+	response := EventsToListEventsRes(
+		events,
+		totalCount,
+		filter.GetLimit(),
+		filter.GetOffset(),
+	)
+
+	return response, nil
 }
 
 // UpdateEvent обновляет существующее событие

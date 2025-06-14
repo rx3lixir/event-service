@@ -205,6 +205,125 @@ func (s *PostgresStore) GetEventsByCategory(parentCtx context.Context, categoryI
 	return events, nil
 }
 
+// GetEventsWithFilter получает события с применением фильтров.
+// Поддерживает фильтрацию по категориям, ценам, датам, локации, источнику и полнотекстовый поиск.
+// Поддерживает пагинацию через limit и offset.
+func (s *PostgresStore) GetEventsWithFilter(parentCtx context.Context, filter *EventFilter) ([]*Event, error) {
+	ctx, cancel := context.WithTimeout(parentCtx, 3*time.Second)
+	defer cancel()
+
+	// Валидация входных параметров
+	if err := validateFilter(filter); err != nil {
+		return nil, fmt.Errorf("invalid filter: %w", err)
+	}
+
+	// Если фильтр пустой, используем обычный GetEvents
+	if filter.IsEmpty() && !filter.HasPagination() {
+		return s.GetEvents(parentCtx)
+	}
+
+	// Строим SQL запрос с фильтрами
+	query, args := s.buildFilteredQuery(filter)
+
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query events with filter: %w", err)
+	}
+	defer rows.Close()
+
+	events := []*Event{}
+	for rows.Next() {
+		event, err := scanEvent(rows)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan event during GetEventsWithFilter: %w", err)
+		}
+		events = append(events, event)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating filtered event rows: %w", err)
+	}
+
+	return events, nil
+}
+
+// CountEventsWithFilter подсчитывает общее количество событий с учетом фильтров.
+// Полезно для реализации пагинации с информацией об общем количестве записей.
+func (s *PostgresStore) CountEventsWithFilter(parentCtx context.Context, filter *EventFilter) (int64, error) {
+	ctx, cancel := context.WithTimeout(parentCtx, 3*time.Second)
+	defer cancel()
+
+	// Валидация входных параметров
+	if err := validateFilter(filter); err != nil {
+		return 0, fmt.Errorf("invalid filter: %w", err)
+	}
+
+	// Строим COUNT запрос
+	query, args := s.buildCountQuery(filter)
+
+	var count int64
+	err := s.db.QueryRow(ctx, query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count events with filter: %w", err)
+	}
+
+	return count, nil
+}
+
+// GetEventsWithFilterAndCount получает события и их общее количество одним вызовом.
+// Оптимизация для случаев, когда нужна и пагинация, и общее количество записей.
+// Возвращает события, общее количество и ошибку.
+func (s *PostgresStore) GetEventsWithFilterAndCount(parentCtx context.Context, filter *EventFilter) ([]*Event, int64, error) {
+	ctx, cancel := context.WithTimeout(parentCtx, 5*time.Second) // Увеличиваем timeout для двух запросов
+	defer cancel()
+
+	// Валидация входных параметров
+	if err := validateFilter(filter); err != nil {
+		return nil, 0, fmt.Errorf("invalid filter: %w", err)
+	}
+
+	// Запускаем оба запроса параллельно для оптимизации
+	type eventResult struct {
+		events []*Event
+		err    error
+	}
+
+	type countResult struct {
+		count int64
+		err   error
+	}
+
+	eventCh := make(chan eventResult, 1)
+	countCh := make(chan countResult, 1)
+
+	// Горутина для получения событий
+	go func() {
+		events, err := s.GetEventsWithFilter(ctx, filter)
+		eventCh <- eventResult{events: events, err: err}
+	}()
+
+	// Горутина для подсчета общего количества
+	go func() {
+		count, err := s.CountEventsWithFilter(ctx, filter)
+		countCh <- countResult{count: count, err: err}
+	}()
+
+	// Ждем результатов обоих запросов
+	eventRes := <-eventCh
+	countRes := <-countCh
+
+	// Проверяем ошибки
+	if eventRes.err != nil {
+		return nil, 0, fmt.Errorf("failed to get events: %w", eventRes.err)
+	}
+
+	if countRes.err != nil {
+		return nil, 0, fmt.Errorf("failed to count events: %w", countRes.err)
+	}
+
+	return eventRes.events, countRes.count, nil
+}
+
 // pgxScanner интерфейс для абстракции pgx.Rows и pgx.Row для функции scanEvent.
 type pgxScanner interface {
 	Scan(dest ...any) error
@@ -214,7 +333,6 @@ type pgxScanner interface {
 // Работает как с pgx.Rows (через rows.Scan), так и с pgx.Row (через row.Scan).
 func scanEvent(scanner pgxScanner) (*Event, error) {
 	event := new(Event)
-	// Убедись, что порядок и количество полей соответствуют SELECT запросам
 	err := scanner.Scan(
 		&event.Id,
 		&event.Name,

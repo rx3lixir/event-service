@@ -30,6 +30,7 @@ func NewPosgresStore(pool DBTX) *PostgresStore {
 
 // EventStore определяет методы для работы с хранилищем событий.
 type EventStore interface {
+	// Базовые CRUD операции для событий
 	CreateEvent(ctx context.Context, event *Event) (*Event, error)
 	UpdateEvent(ctx context.Context, event *Event) (*Event, error)
 	GetEvents(ctx context.Context) ([]*Event, error)
@@ -37,6 +38,12 @@ type EventStore interface {
 	DeleteEvent(ctx context.Context, id int64) (*Event, error)
 	GetEventsByCategory(ctx context.Context, categoryID int64) ([]*Event, error)
 
+	// Методы событий с поддержкой фильтрации
+	GetEventsWithFilter(ctx context.Context, filter *EventFilter) ([]*Event, error)
+	CountEventsWithFilter(ctx context.Context, filter *EventFilter) (int64, error)
+	GetEventwWithFilterAndCount(ctx context.Context, filter *EventFilter) ([]*Event, int64, error)
+
+	// Базовые CRUD операции для категорий
 	CreateCategory(ctx context.Context, category *Category) error
 	ListCategories(parentCtx context.Context) ([]*Category, error)
 	GetCategoryByID(parentCtx context.Context, id int) (*Category, error)

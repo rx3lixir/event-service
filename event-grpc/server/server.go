@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	eventPb "github.com/rx3lixir/event-service/event-grpc/gen/go"
 	"github.com/rx3lixir/event-service/internal/db"
+	"github.com/rx3lixir/event-service/internal/elasticsearch"
 	"github.com/rx3lixir/event-service/pkg/logger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -14,19 +15,21 @@ import (
 )
 
 type Server struct {
-	storer *db.PostgresStore
+	storer    *db.PostgresStore
+	esService *elasticsearch.Service
 	eventPb.UnimplementedEventServiceServer
 	log logger.Logger
 }
 
-func NewServer(storer *db.PostgresStore, log logger.Logger) *Server {
+func NewServer(storer *db.PostgresStore, esService *elasticsearch.Service, log logger.Logger) *Server {
 	return &Server{
-		storer: storer,
-		log:    log,
+		storer:    storer,
+		esService: esService,
+		log:       log,
 	}
 }
 
-// CreateEvent создает новое событие.
+// CreateEvent создает новое событие и индексирует его в Elasticsearch.
 func (s *Server) CreateEvent(ctx context.Context, req *eventPb.CreateEventReq) (*eventPb.EventRes, error) {
 	s.log.Info("CreateEvent request received",
 		"method", "CreateEvent",
@@ -46,14 +49,26 @@ func (s *Server) CreateEvent(ctx context.Context, req *eventPb.CreateEventReq) (
 	params := ProtoToCreateEventParams(req)
 	dbEventToCreate := db.NewEventFromCreateRequest(params)
 
+	// Создаем событие в PostgreSQL
 	createdEvent, err := s.storer.CreateEvent(ctx, dbEventToCreate)
 	if err != nil {
-		s.log.Error("failed to create event",
+		s.log.Error("failed to create event in PostgreSQL",
 			"method", "CreateEvent",
 			"error", err,
 			"event-name", req.GetName(),
 		)
 		return nil, wrapError(err)
+	}
+
+	// Индексируем событие в Elasticsearch
+	if err := s.esService.IndexEvent(ctx, createdEvent); err != nil {
+		s.log.Error("failed to index event in Elasticsearch",
+			"method", "CreateEvent",
+			"event_id", createdEvent.Id,
+			"error", err,
+		)
+		// Не возвращаем ошибку, так как событие уже создано в PostgreSQL
+		// В продакшене можно добавить retry механизм или очередь
 	}
 
 	s.log.Info("event created successfully",
@@ -62,6 +77,7 @@ func (s *Server) CreateEvent(ctx context.Context, req *eventPb.CreateEventReq) (
 		"name", createdEvent.Name,
 		"category", createdEvent.CategoryID,
 	)
+
 	return DBEventToProtoEventRes(createdEvent), nil
 }
 
@@ -91,9 +107,14 @@ func (s *Server) GetEvent(ctx context.Context, req *eventPb.GetEventReq) (*event
 	return DBEventToProtoEventRes(event), nil
 }
 
+// ListEvents получает список событий.
+// Если есть поисковый запрос (search_text), использует Elasticsearch.
+// Иначе использует PostgreSQL с фильтрами.
 func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*eventPb.ListEventsRes, error) {
-	s.log.Info("starting list events with filters",
+	s.log.Info("starting list events",
 		"method", "ListEvents",
+		"has_search_text", req.SearchText != nil && req.GetSearchText() != "",
+		"search_text", req.GetSearchText(),
 		"category_ids", req.GetCategoryIDs(),
 		"min_price", req.GetMinPrice(),
 		"max_price", req.GetMaxPrice(),
@@ -101,27 +122,75 @@ func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*e
 		"date_to", req.GetDateTo(),
 		"location", req.GetLocation(),
 		"source", req.GetSource(),
-		"search_text", req.GetSearchText(),
 		"limit", req.GetLimit(),
 		"offset", req.GetOffset(),
 		"include_count", req.GetIncludeCount(),
 	)
 
-	// Вадидация и конвертация gRPC запроса в фильтр
-	filter, err := ProtoToEventFilter(req)
+	// Если есть поисковый запрос, используем Elasticsearch
+	if req.SearchText != nil && req.GetSearchText() != "" {
+		return s.searchEventsWithElasticsearch(ctx, req)
+	}
+
+	// Иначе используем PostgreSQL
+	return s.listEventsWithPostgreSQL(ctx, req)
+}
+
+// searchEventsWithElasticsearch выполняет поиск через Elasticsearch
+func (s *Server) searchEventsWithElasticsearch(ctx context.Context, req *eventPb.ListEventsReq) (*eventPb.ListEventsRes, error) {
+	s.log.Debug("using Elasticsearch for search",
+		"search_text", req.GetSearchText(),
+	)
+
+	// Конвертируем в фильтр Elasticsearch
+	filter, err := ProtoToElasticsearchFilter(req)
 	if err != nil {
-		s.log.Error("invalid filter parameters",
+		s.log.Error("invalid Elasticsearch filter parameters",
 			"method", "ListEvents",
 			"error", err,
 		)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 
+	// Выполняем поиск
+	result, err := s.esService.SearchEvents(ctx, filter)
+	if err != nil {
+		s.log.Error("failed to search events in Elasticsearch",
+			"method", "ListEvents",
+			"error", err,
+			"filter", filter,
+		)
+		return nil, status.Error(codes.Internal, "search failed")
+	}
+
+	s.log.Info("Elasticsearch search completed",
+		"method", "ListEvents",
+		"events_found", result.Total,
+		"events_returned", len(result.Events),
+		"search_time", result.SearchTime,
+	)
+
+	return ElasticsearchResultToListEventsRes(result), nil
+}
+
+// listEventsWithPostgreSQL выполняет запрос через PostgreSQL
+func (s *Server) listEventsWithPostgreSQL(ctx context.Context, req *eventPb.ListEventsReq) (*eventPb.ListEventsRes, error) {
+	s.log.Debug("using PostgreSQL for filtered list")
+
+	// Конвертируем в фильтр PostgreSQL
+	filter, err := ProtoToEventFilter(req)
+	if err != nil {
+		s.log.Error("invalid PostgreSQL filter parameters",
+			"method", "ListEvents",
+			"error", err,
+		)
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	var events []*db.Event
 	var totalCount *int64
 
-	// Ecли клиент запросил общее кол-во осбытий - сичтаем
+	// Если клиент запросил общее кол-во событий - считаем
 	if req.GetIncludeCount() {
 		eventsResult, count, err := s.storer.GetEventsWithFilterAndCount(ctx, filter)
 		if err != nil {
@@ -135,7 +204,7 @@ func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*e
 		events = eventsResult
 		totalCount = &count
 
-		s.log.Info("events retrieved successfully with count",
+		s.log.Info("PostgreSQL events retrieved successfully with count",
 			"method", "ListEvents",
 			"events_count", len(events),
 			"total_count", count,
@@ -154,7 +223,7 @@ func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*e
 		}
 		events = eventsResult
 
-		s.log.Info("events retrieved successfully",
+		s.log.Info("PostgreSQL events retrieved successfully",
 			"method", "ListEvents",
 			"events_count", len(events),
 			"has_filters", !filter.IsEmpty(),
@@ -172,7 +241,7 @@ func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*e
 	return response, nil
 }
 
-// UpdateEvent обновляет существующее событие
+// UpdateEvent обновляет существующее событие в PostgreSQL и Elasticsearch
 func (s *Server) UpdateEvent(ctx context.Context, req *eventPb.UpdateEventReq) (*eventPb.EventRes, error) {
 	s.log.Info("starting update event",
 		"method", "UpdateEvent",
@@ -206,11 +275,21 @@ func (s *Server) UpdateEvent(ctx context.Context, req *eventPb.UpdateEventReq) (
 	// Применяем обновления
 	currentEvent.ApplyUpdate(updateParams)
 
-	// Обновляем в базе
+	// Обновляем в PostgreSQL
 	updatedEvent, err := s.storer.UpdateEvent(ctx, currentEvent)
 	if err != nil {
-		s.log.Error("Failed to update event", "id", id, "error", err)
+		s.log.Error("Failed to update event in PostgreSQL", "id", id, "error", err)
 		return nil, wrapError(err)
+	}
+
+	// Обновляем в Elasticsearch
+	if err := s.esService.UpdateEvent(ctx, updatedEvent); err != nil {
+		s.log.Error("failed to update event in Elasticsearch",
+			"method", "UpdateEvent",
+			"event_id", updatedEvent.Id,
+			"error", err,
+		)
+		// Не возвращаем ошибку, так как событие уже обновлено в PostgreSQL
 	}
 
 	s.log.Info("event updated successfully",
@@ -221,20 +300,32 @@ func (s *Server) UpdateEvent(ctx context.Context, req *eventPb.UpdateEventReq) (
 	return DBEventToProtoEventRes(updatedEvent), nil
 }
 
+// DeleteEvent удаляет событие из PostgreSQL и Elasticsearch
 func (s *Server) DeleteEvent(ctx context.Context, req *eventPb.DeleteEventReq) (*emptypb.Empty, error) {
 	s.log.Info("starting delete event",
 		"method", "DeleteEvent",
 		"event_id", req.GetId(),
 	)
 
+	// Удаляем из PostgreSQL
 	_, err := s.storer.DeleteEvent(ctx, req.GetId())
 	if err != nil {
-		s.log.Error("failed to delete event",
+		s.log.Error("failed to delete event from PostgreSQL",
 			"method", "DeleteEvent",
 			"event_id", req.GetId(),
 			"error", err,
 		)
 		return nil, wrapError(err)
+	}
+
+	// Удаляем из Elasticsearch
+	if err := s.esService.DeleteEvent(ctx, req.GetId()); err != nil {
+		s.log.Error("failed to delete event from Elasticsearch",
+			"method", "DeleteEvent",
+			"event_id", req.GetId(),
+			"error", err,
+		)
+		// Не возвращаем ошибку, так как событие уже удалено из PostgreSQL
 	}
 
 	s.log.Info("event deleted successfully",
@@ -464,7 +555,7 @@ func validateCreateEventReq(req *eventPb.CreateEventReq) error {
 	// - Формат даты
 	// - Формат времени
 	// - Валидность категории
-	// - и т.д.
+	// и т.д.
 
 	return nil
 }

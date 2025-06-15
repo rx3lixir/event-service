@@ -12,6 +12,11 @@ import (
 	"github.com/rx3lixir/event-service/pkg/logger"
 )
 
+// ElasticsearchHealthChecker интерфейс для проверки здоровья Elasticsearch
+type ElasticsearchHealthChecker interface {
+	Health(ctx context.Context) error
+}
+
 // Server структура для healthcheck сервера
 type Server struct {
 	config Config
@@ -75,6 +80,35 @@ func (s *Server) setupChecks() {
 		"required_tables", s.config.RequiredTables,
 		"migration_version", s.config.MigrationVersion,
 	)
+}
+
+// AddElasticsearchCheck добавляет проверку Elasticsearch
+func (s *Server) AddElasticsearchCheck(esChecker ElasticsearchHealthChecker) {
+	s.health.AddCheck("elasticsearch", CheckerFunc(func(ctx context.Context) CheckResult {
+		start := time.Now()
+
+		err := esChecker.Health(ctx)
+		duration := time.Since(start)
+
+		if err != nil {
+			return CheckResult{
+				Status: StatusDown,
+				Error:  err.Error(),
+				Details: map[string]any{
+					"duration_ms": duration.Milliseconds(),
+				},
+			}
+		}
+
+		return CheckResult{
+			Status: StatusUp,
+			Details: map[string]any{
+				"duration_ms": duration.Milliseconds(),
+			},
+		}
+	}))
+
+	s.log.Info("Elasticsearch health check added")
 }
 
 // setupRoutes настраивает HTTP маршруты

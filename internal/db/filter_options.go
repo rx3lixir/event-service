@@ -2,7 +2,8 @@ package db
 
 import "time"
 
-// EventFilter содержит все возможные фильтры для событий.
+// EventFilter содержит фильтры для событий в PostgreSQL
+// Полнотекстовый поиск и некоторые сложные фильтры теперь обрабатываются через Elasticsearch
 type EventFilter struct {
 	CategoryIDs []int64    // Фильтр по массиву ID категорий
 	MinPrice    *float32   // Минимальная цена (включительно)
@@ -11,9 +12,12 @@ type EventFilter struct {
 	DateTo      *time.Time // Дата окончания диапазона (включительно)
 	Location    *string    // Фильтр по локации (точное совпадение)
 	Source      *string    // Фильтр по источнику события (точное совпадение)
-	SearchText  *string    // Поиск по тексту в названии и описании (ILIKE)
-	Limit       *int       // Лимит количества записей для пагинации
-	Offset      *int       // Смещение для пагинации
+
+	// Пагинация
+	Limit  *int // Лимит количества записей для пагинации
+	Offset *int // Смещение для пагинации
+
+	// Примечание: SearchText удален - теперь используется Elasticsearch
 }
 
 // FilterOption функциональная опция для конфигурации фильтра.
@@ -93,14 +97,6 @@ func WithSource(source string) FilterOption {
 	}
 }
 
-// WithSearch добавляет полнотекстовый поиск по названию и описанию события.
-// Использует ILIKE для регистронезависимого поиска с поддержкой wildcards.
-func WithSearch(searchText string) FilterOption {
-	return func(f *EventFilter) {
-		f.SearchText = &searchText
-	}
-}
-
 // WithPagination добавляет параметры пагинации.
 // limit - максимальное количество записей в ответе.
 // offset - количество записей, которые нужно пропустить.
@@ -138,8 +134,7 @@ func (f *EventFilter) IsEmpty() bool {
 		f.DateFrom == nil &&
 		f.DateTo == nil &&
 		f.Location == nil &&
-		f.Source == nil &&
-		f.SearchText == nil
+		f.Source == nil
 }
 
 // HasPagination проверяет, установлены ли параметры пагинации.

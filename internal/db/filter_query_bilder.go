@@ -7,6 +7,7 @@ import (
 
 // buildFilteredQuery строит SQL запрос с WHERE условиями на основе фильтра.
 // Возвращает готовый SQL запрос и массив аргументов для защиты от SQL injection.
+// Полнотекстовый поиск убран - теперь используется Elasticsearch.
 func (s *PostgresStore) buildFilteredQuery(filter *EventFilter) (string, []any) {
 	// Базовый SELECT запрос с теми же полями что и в других методах
 	baseQuery := `SELECT id, name, description, category_id, date, time, location, price, image, source, created_at, updated_at FROM events`
@@ -15,7 +16,7 @@ func (s *PostgresStore) buildFilteredQuery(filter *EventFilter) (string, []any) 
 	var args []any
 	argIndex := 1
 
-	// == Условия == \\
+	// == Условия фильтрации == \\
 
 	// Фильтр по категориям (IN clause для множественного выбора)
 	if len(filter.CategoryIDs) > 0 {
@@ -44,14 +45,14 @@ func (s *PostgresStore) buildFilteredQuery(filter *EventFilter) (string, []any) 
 
 	// Фильтр по дате от (больше или равно)
 	if filter.DateFrom != nil {
-		dateToStr := filter.DateFrom.Format("2006-01-02")
+		dateFromStr := filter.DateFrom.Format("2006-01-02")
 		conditions = append(conditions, fmt.Sprintf("date >= $%d", argIndex))
-		args = append(args, dateToStr)
+		args = append(args, dateFromStr)
 		argIndex++
 	}
 
-	// Фильтр по дате от (меньше или равно)
-	if filter.DateFrom != nil {
+	// Фильтр по дате до (меньше или равно)
+	if filter.DateTo != nil {
 		dateToStr := filter.DateTo.Format("2006-01-02")
 		conditions = append(conditions, fmt.Sprintf("date <= $%d", argIndex))
 		args = append(args, dateToStr)
@@ -72,17 +73,9 @@ func (s *PostgresStore) buildFilteredQuery(filter *EventFilter) (string, []any) 
 		argIndex++
 	}
 
-	// Полнотекстовый поиск по названию и описанию (регистронезависимый)
-	if filter.SearchText != nil {
-		searchPattern := "%" + *filter.SearchText + "%"
-		conditions = append(conditions, fmt.Sprintf("(name ILIKE $%d OR description ILIKE $%d)", argIndex, argIndex+1))
-		args = append(args, searchPattern, searchPattern)
-		argIndex += 2
-	}
-
 	// == Собираем запрос == \\
 
-	// Добавляем WHERRE условия, если есть
+	// Добавляем WHERE условия, если есть
 	if len(conditions) > 0 {
 		baseQuery += " WHERE " + strings.Join(conditions, " AND ")
 	}
@@ -98,9 +91,9 @@ func (s *PostgresStore) buildFilteredQuery(filter *EventFilter) (string, []any) 
 	}
 
 	// Пагинация: OFFSET
-	if filter.Limit != nil {
+	if filter.Offset != nil {
 		baseQuery += fmt.Sprintf(" OFFSET $%d", argIndex)
-		args = append(args, *filter.Limit)
+		args = append(args, *filter.Offset)
 		argIndex++
 	}
 
@@ -165,13 +158,6 @@ func (s *PostgresStore) buildCountQuery(filter *EventFilter) (string, []any) {
 		conditions = append(conditions, fmt.Sprintf("source = $%d", argIndex))
 		args = append(args, *filter.Source)
 		argIndex++
-	}
-
-	if filter.SearchText != nil {
-		searchPattern := "%" + *filter.SearchText + "%"
-		conditions = append(conditions, fmt.Sprintf("(name ILIKE $%d OR description ILIKE $%d)", argIndex, argIndex+1))
-		args = append(args, searchPattern, searchPattern)
-		argIndex += 2
 	}
 
 	// Добавляем WHERE условия

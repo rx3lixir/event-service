@@ -6,5 +6,10 @@ db_params:
   db_name: event-storer
   port: 5432
   connect_timeout: 10s
+elasticsearch_params:
+  url: http://elasticsearch:9200
+  index: events
+  timeout: 10s
+  max_retries: 3
 server_params:
   address: 0.0.0.0:9091

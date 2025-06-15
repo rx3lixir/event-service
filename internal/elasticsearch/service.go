@@ -1,0 +1,361 @@
+package elasticsearch
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"time"
+
+	"github.com/elastic/go-elasticsearch/v8/esapi"
+	"github.com/rx3lixir/event-service/internal/db"
+	"github.com/rx3lixir/event-service/pkg/logger"
+)
+
+// Service представляет сервис для работы с событиями в Elasticsearch
+type Service struct {
+	client *Client
+	log    logger.Logger
+}
+
+// NewService создает новый сервис Elasticsearch
+func NewService(client *Client, log logger.Logger) *Service {
+	return &Service{
+		client: client,
+		log:    log,
+	}
+}
+
+// IndexEvent индексирует событие в Elasticsearch
+func (s *Service) IndexEvent(ctx context.Context, event *db.Event) error {
+	// Конвертируем в документ ES
+	doc := NewEventDocumentFromDB(event)
+
+	// Сереализуем в JSON
+	body, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event document: %w", err)
+	}
+
+	// Индексиурем документ
+	req := esapi.IndexRequest{
+		Index:      s.client.GetIndex(),
+		DocumentID: strconv.FormatInt(event.Id, 10),
+		Body:       bytes.NewReader(body),
+		Refresh:    "true",
+	}
+
+	res, err := req.Do(ctx, s.client.GetClient())
+	if err != nil {
+		return fmt.Errorf("failed to index event: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		return fmt.Errorf("elasticsearch indexing failed: %s", res.String())
+	}
+
+	s.log.Debug("Event indexed successfully",
+		"event_id", event.Id,
+		"index", s.client.GetClient(),
+		"status", res.Status(),
+	)
+
+	return nil
+}
+
+// UpdateEvent обновляет событие в Elasticsearch
+func (s *Service) UpdateEvent(ctx context.Context, event *db.Event) error {
+	// Для простоты используем полное переиндексирование
+	// В продакшене можно использовать partial update
+	return s.IndexEvent(ctx, event)
+}
+
+// DeleteEvent удаляет событие из Elasticsearch
+func (s *Service) DeleteEvent(ctx context.Context, eventID int64) error {
+	req := esapi.DeleteRequest{
+		Index:      s.client.GetIndex(),
+		DocumentID: strconv.FormatInt(eventID, 10),
+		Refresh:    "true",
+	}
+
+	res, err := req.Do(ctx, s.client.GetClient())
+	if err != nil {
+		return fmt.Errorf("failed to delete event: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.IsError() && res.StatusCode != 404 {
+		return fmt.Errorf("elasticsearch deletion failed: %s", res.String())
+	}
+
+	s.log.Debug("Event deleted from elasticsearch",
+		"event_id", eventID,
+		"status", res.Status(),
+	)
+
+	return nil
+}
+
+// SearchEvents идет события в Elasticsearch
+func (s *Service) SearchEvents(ctx context.Context, filter *SearchFilter) (*SearchResult, error) {
+	// Строим поисковый запрос
+	query := s.buildSearhQuery(filter)
+
+	// Сериализуем запрос
+	queryBody, err := json.Marshal(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal search query: %w", err)
+	}
+
+	s.log.Debug("Elasticsearch search query", "query", string(queryBody))
+
+	// Выполняем поиск
+	req := esapi.SearchRequest{
+		Index: []string{s.client.GetIndex()},
+		Body:  bytes.NewReader(queryBody),
+	}
+
+	start := time.Now()
+	res, err := req.Do(ctx, s.client.GetClient())
+	searchTime := time.Since(start)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute search: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		return nil, fmt.Errorf("failed to search via elasticsearch: %s", res.String())
+	}
+
+	// Парсим ответ
+	var response struct {
+		Hits struct {
+			Total struct {
+				Value int64 `json:"value"`
+			} `json:"total"`
+			MaxScore *float64 `json:"max_score"`
+			Hits     []struct {
+				Source EventDocument `json:"_source"`
+				Score  *float64      `json:"_score"`
+			} `json:"hits"`
+		} `json:"hits"`
+	}
+
+	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode search response: %w", err)
+	}
+
+	// Формируем результат
+	events := make([]*EventDocument, 0, len(response.Hits.Hits))
+	for _, hit := range response.Hits.Hits {
+		events = append(events, &hit.Source)
+	}
+
+	result := &SearchResult{
+		Events:     events,
+		Total:      response.Hits.Total.Value,
+		MaxScore:   response.Hits.MaxScore,
+		SearchTime: searchTime.String(),
+	}
+
+	s.log.Info("Search completed",
+		"total_found", result.Total,
+		"returned", len(events),
+		"search_time", searchTime,
+		"max_score", result.MaxScore,
+	)
+
+	return result, nil
+}
+
+// buildSearhQuery строит запрос для Elasticsearch
+func (s *Service) buildSearhQuery(filter *SearchFilter) map[string]any {
+	query := map[string]any{
+		"from": filter.From,
+		"size": filter.Size,
+	}
+
+	// Основной запрос
+	boolQuery := map[string]any{
+		"bool": map[string]any{},
+	}
+
+	var mustQueries []any
+	var filterQueries []any
+
+	// Полнотекстовый поиск
+	if filter.Query != "" {
+		mustQueries = append(mustQueries, map[string]any{
+			"multi_match": map[string]any{
+				"query":     filter.Query,
+				"fields":    []string{"name^3", "description^2", "location^1"}, // Весовые коэффициенты
+				"type":      "best_fields",
+				"fuzziness": "AUTO", // Автоматическая коррекция опечаток
+			},
+		})
+	}
+
+	// Фильтр по цене
+	if filter.MinPrice != nil || filter.MaxPrice != nil {
+		rangeQuery := map[string]any{}
+
+		if filter.MinPrice != nil {
+			rangeQuery["gte"] = *filter.MinPrice
+		}
+		if filter.MaxPrice != nil {
+			rangeQuery["lte"] = *filter.MaxPrice
+		}
+
+		filterQueries = append(filterQueries, map[string]any{
+			"range": map[string]any{
+				"price": rangeQuery,
+			},
+		})
+
+	}
+
+	// Фильтр по датам
+	if filter.DateFrom != nil || filter.DateTo != nil {
+		rangeQuery := map[string]any{}
+
+		if filter.DateFrom != nil {
+			rangeQuery["gte"] = filter.DateFrom.Format("2006-01-02")
+		}
+		if filter.DateTo != nil {
+			rangeQuery["lte"] = filter.DateTo.Format("2006-01-02")
+		}
+
+		filterQueries = append(filterQueries, map[string]any{
+			"range": map[string]any{
+				"date": rangeQuery,
+			},
+		})
+	}
+
+	// Фильтр по локации (точное совпадение)
+	if filter.Location != nil {
+		filterQueries = append(filterQueries, map[string]any{
+			"term": map[string]any{
+				"location.keyword": *filter.Location,
+			},
+		})
+	}
+
+	// Фильтр по источнику
+	if filter.Source != nil {
+		filterQueries = append(filterQueries, map[string]any{
+			"term": map[string]any{
+				"source": *filter.Source,
+			},
+		})
+	}
+
+	// Если нет поискового запроса, используем match_all
+	if len(mustQueries) == 0 {
+		mustQueries = append(mustQueries, map[string]any{
+			"match_all": map[string]any{},
+		})
+	}
+
+	// Собираем bool запрос
+	boolQuery["bool"].(map[string]any)["must"] = mustQueries
+	if len(filterQueries) > 0 {
+		boolQuery["bool"].(map[string]any)["filter"] = filterQueries
+	}
+
+	query["query"] = boolQuery
+
+	// Добавляем сортировку
+	if filter.SortBy != "" {
+		sortField := filter.SortBy
+		sortOrder := filter.SortOrder
+
+		if sortOrder == "" {
+			sortOrder = "desc"
+		}
+
+		// Для текстовых полей используем keyword версию
+		if sortField == "name" || sortField == "location" {
+			sortField += ".keyword"
+		}
+
+		query["sort"] = []any{
+			map[string]any{
+				sortField: map[string]any{
+					"order": sortOrder,
+				},
+			},
+		}
+	}
+
+	return query
+}
+
+// BulkIndexEvents массово индексирует события
+func (s *Service) BulkIndexEvents(ctx context.Context, events []*db.Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+
+	var buf bytes.Buffer
+
+	// Формируем bulk запрос
+	for _, event := range events {
+		// Action line
+		actionLine := map[string]any{
+			"index": map[string]any{
+				"_index": s.client.GetIndex(),
+				"_id":    strconv.FormatInt(event.Id, 10),
+			},
+		}
+
+		actionBytes, err := json.Marshal(actionLine)
+		if err != nil {
+			return fmt.Errorf("failed to marshal action line: %w", err)
+		}
+
+		buf.Write(actionBytes)
+		buf.WriteByte('\n')
+
+		// Document line
+		doc := NewEventDocumentFromDB(event)
+		docBytes, err := json.Marshal(doc)
+		if err != nil {
+			return fmt.Errorf("failed to marshal document: %w", err)
+		}
+
+		buf.Write(docBytes)
+		buf.WriteByte('\n')
+	}
+
+	// Выполняем bulk запрос
+	req := esapi.BulkRequest{
+		Body:    bytes.NewReader(buf.Bytes()),
+		Refresh: "true",
+	}
+
+	res, err := req.Do(ctx, s.client.GetClient())
+	if err != nil {
+		return fmt.Errorf("failed to execute bulk request: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		return fmt.Errorf("bulk indexing failed: %s", res.String())
+	}
+
+	s.log.Info("Bulk indexing completed",
+		"events_count", len(events),
+		"status", res.Status(),
+	)
+
+	return nil
+}
+
+// Health проверяет состояние Elasticsearch
+func (s *Service) Health(ctx context.Context) error {
+	return s.client.Ping(ctx)
+}

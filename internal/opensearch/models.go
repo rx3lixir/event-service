@@ -54,6 +54,29 @@ type SearchResult struct {
 	SearchTime string           `json:"search_time"`
 }
 
+// SuggestionRequest представляет запрос на автокомплит
+type SuggestionRequest struct {
+	Query      string   `json:"query"`
+	MaxResults int      `json:"max_results"`
+	Fields     []string `json:"fields"`
+}
+
+// SuggestionResponse представляет ответ с предложениями
+type SuggestionResponse struct {
+	Suggesions []Suggestion `json:"suggestions"`
+	Query      string       `json:"query"`
+	Total      int          `json:"total"`
+}
+
+// Suggestion одно предложение
+type Suggestion struct {
+	Text     string  `json:"text"`
+	Score    float64 `json:"score"`
+	Type     string  `json:"type"`
+	Category string  `json:"category,omitempty"`
+	EventID  *int64  `json:"event_id,omitempty"`
+}
+
 // NewEventDocumentFromDB создает EventDocument из db.Event
 func NewEventDocumentFromDB(event *db.Event) *EventDocument {
 	return &EventDocument{

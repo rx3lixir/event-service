@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package event;
 
-option go_package = "github.com/rx3lixir/event-service/event-grpc/gen/go";
+option go_package = "github.com/rx3lixir/gateway-service/gateway-grpc/gen/go/event";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/empty.proto";
@@ -95,6 +95,30 @@ message PaginationMeta {
 }
 
 // ============================================================================
+// ПРЕДЛОЖЕНИЯ (SUGGESTIONS)
+// ============================================================================
+
+message SuggestionReq {
+  string query = 1;
+  int32 max_results = 2;
+  repeated string fields = 3;
+}
+
+message SuggestionItem {
+  string text = 1;
+  double score = 2;
+  string type = 3;
+  optional string category = 4;
+  optional int64 event_id = 5;
+}
+
+message SuggestionRes {
+  repeated SuggestionItem suggestions = 1;
+  string query = 2;
+  int32 total = 3;
+}
+
+// ============================================================================
 // КАТЕГОРИИ (CATEGORIES)
 // ============================================================================
 
@@ -140,6 +164,9 @@ service EventService {
   rpc ListEvents(ListEventsReq) returns (ListEventsRes);
   rpc UpdateEvent(UpdateEventReq) returns (EventRes);
   rpc DeleteEvent(DeleteEventReq) returns (google.protobuf.Empty);
+
+  // Операции предложения 
+  rpc GetSuggestions(SuggestionReq) returns (SuggestionRes);
 
   // Операции с категориями
   rpc CreateCategory(CreateCategoryReq) returns (CategoryRes);

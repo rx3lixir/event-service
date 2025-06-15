@@ -186,6 +186,15 @@ func (s *Service) buildSearhQuery(filter *SearchFilter) map[string]any {
 	var mustQueries []any
 	var filterQueries []any
 
+	// Фильтр по категориям
+	if len(filter.CategoryIDs) > 0 {
+		filterQueries = append(filterQueries, map[string]any{
+			"terms": map[string]any{
+				"category_id": filter.CategoryIDs,
+			},
+		})
+	}
+
 	// Полнотекстовый поиск
 	if filter.Query != "" {
 		mustQueries = append(mustQueries, map[string]any{

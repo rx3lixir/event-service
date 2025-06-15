@@ -41,7 +41,7 @@ type EventStore interface {
 	// Методы событий с поддержкой фильтрации
 	GetEventsWithFilter(ctx context.Context, filter *EventFilter) ([]*Event, error)
 	CountEventsWithFilter(ctx context.Context, filter *EventFilter) (int64, error)
-	GetEventwWithFilterAndCount(ctx context.Context, filter *EventFilter) ([]*Event, int64, error)
+	GetEventsWithFilterAndCount(ctx context.Context, filter *EventFilter) ([]*Event, int64, error)
 
 	// Базовые CRUD операции для категорий
 	CreateCategory(ctx context.Context, category *Category) error

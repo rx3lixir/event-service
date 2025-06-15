@@ -21,20 +21,21 @@ const (
 	portKey           = "db_params.port"
 	connectTimeoutKey = "db_params.connect_timeout"
 
-	elasticsearchURLKey        = "elasticsearch_params.url"
-	elasticsearchIndexKey      = "elasticsearch_params.index"
-	elasticsearchTimeoutKey    = "elasticsearch_params.timeout"
-	elasticsearchMaxRetriesKey = "elasticsearch_params.max_retries"
+	// Заменяем elasticsearch на opensearch
+	opensearchURLKey        = "opensearch_params.url"
+	opensearchIndexKey      = "opensearch_params.index"
+	opensearchTimeoutKey    = "opensearch_params.timeout"
+	opensearchMaxRetriesKey = "opensearch_params.max_retries"
 
 	serviceAddress = "server_params.address"
 )
 
 // AppConfig представляет конфигурацию всего приложения
 type AppConfig struct {
-	Service       ServiceParams       `mapstructure:"service_params" validate:"required"`
-	DB            DBParams            `mapstructure:"db_params" validate:"required"`
-	Elasticsearch ElasticsearchParams `mapstructure:"elasticsearch_params" validate:"required"`
-	Server        ServerParams        `mapstructure:"server_params" validate:"required"`
+	Service    ServiceParams    `mapstructure:"service_params" validate:"required"`
+	DB         DBParams         `mapstructure:"db_params" validate:"required"`
+	OpenSearch OpenSearchParams `mapstructure:"opensearch_params" validate:"required"`
+	Server     ServerParams     `mapstructure:"server_params" validate:"required"`
 }
 
 // ApplicationParams содержит общие параметры приложения
@@ -56,8 +57,8 @@ type DBParams struct {
 	ConnectTimeout time.Duration `mapstructure:"connect_timeout" validate:"required,min=1"`
 }
 
-// ElasticsearchParams содержит параметры подключения к Elasticsearch
-type ElasticsearchParams struct {
+// OpenSearchParams содержит параметры подключения к OpenSearch
+type OpenSearchParams struct {
 	URL        string        `mapstructure:"url" validate:"required"`
 	Index      string        `mapstructure:"index" validate:"required"`
 	Timeout    time.Duration `mapstructure:"timeout" validate:"required,min=1"`
@@ -92,18 +93,18 @@ func (db *DBParams) DSN() string {
 // EnvBindings возвращает мапу ключей конфигурации и соответствующих им переменных окружения
 func envBindings() map[string]string {
 	return map[string]string{
-		envKey:                     "SERVICE_KEY",
-		usernameKey:                "DB_USERNAME",
-		passwordKey:                "DB_PASSWORD",
-		dbNameKey:                  "DB_NAME",
-		hostKey:                    "DB_HOST",
-		portKey:                    "DB_PORT",
-		connectTimeoutKey:          "DB_CONNECT_TIMEOUT",
-		serviceAddress:             "SERVICE_ADDRESS",
-		elasticsearchURLKey:        "ELASTICSEARCH_URL",
-		elasticsearchIndexKey:      "ELASTICSEARCH_INDEX",
-		elasticsearchTimeoutKey:    "ELASTICSEARCH_TIMEOUT",
-		elasticsearchMaxRetriesKey: "ELASTICSEARCH_MAX_RETRIES",
+		envKey:                  "SERVICE_KEY",
+		usernameKey:             "DB_USERNAME",
+		passwordKey:             "DB_PASSWORD",
+		dbNameKey:               "DB_NAME",
+		hostKey:                 "DB_HOST",
+		portKey:                 "DB_PORT",
+		connectTimeoutKey:       "DB_CONNECT_TIMEOUT",
+		serviceAddress:          "SERVICE_ADDRESS",
+		opensearchURLKey:        "OPENSEARCH_URL",
+		opensearchIndexKey:      "OPENSEARCH_INDEX",
+		opensearchTimeoutKey:    "OPENSEARCH_TIMEOUT",
+		opensearchMaxRetriesKey: "OPENSEARCH_MAX_RETRIES",
 	}
 }
 
@@ -145,15 +146,15 @@ func New() (*AppConfig, error) {
 		config.DB.Host = "0.0.0.0"
 	}
 
-	// Значения по умолчанию для Elasticsearch
-	if config.Elasticsearch.Index == "" {
-		config.Elasticsearch.Index = "events"
+	// Значения по умолчанию для OpenSearch
+	if config.OpenSearch.Index == "" {
+		config.OpenSearch.Index = "events"
 	}
-	if config.Elasticsearch.Timeout == 0 {
-		config.Elasticsearch.Timeout = 10 * time.Second
+	if config.OpenSearch.Timeout == 0 {
+		config.OpenSearch.Timeout = 10 * time.Second
 	}
-	if config.Elasticsearch.MaxRetries == 0 {
-		config.Elasticsearch.MaxRetries = 3
+	if config.OpenSearch.MaxRetries == 0 {
+		config.OpenSearch.MaxRetries = 3
 	}
 
 	// Валидация конфигурации

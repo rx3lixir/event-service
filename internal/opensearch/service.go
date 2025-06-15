@@ -1,4 +1,4 @@
-package elasticsearch
+package opensearch
 
 import (
 	"bytes"
@@ -6,20 +6,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/elastic/go-elasticsearch/v8/esapi"
 	"github.com/rx3lixir/event-service/internal/db"
 	"github.com/rx3lixir/event-service/pkg/logger"
 )
 
-// Service представляет сервис для работы с событиями в Elasticsearch
+// Service представляет сервис для работы с событиями в OpenSearch
 type Service struct {
 	client *Client
 	log    logger.Logger
 }
 
-// NewService создает новый сервис Elasticsearch
+// NewService создает новый сервис OpenSearch
 func NewService(client *Client, log logger.Logger) *Service {
 	return &Service{
 		client: client,
@@ -27,70 +27,68 @@ func NewService(client *Client, log logger.Logger) *Service {
 	}
 }
 
-// IndexEvent индексирует событие в Elasticsearch
+// IndexEvent индексирует событие в OpenSearch
 func (s *Service) IndexEvent(ctx context.Context, event *db.Event) error {
-	// Конвертируем в документ ES
+	// Конвертируем в документ OS
 	doc := NewEventDocumentFromDB(event)
 
-	// Сереализуем в JSON
+	// Сериализуем в JSON
 	body, err := json.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event document: %w", err)
 	}
 
-	// Индексиурем документ
-	req := esapi.IndexRequest{
-		Index:      s.client.GetIndex(),
-		DocumentID: strconv.FormatInt(event.Id, 10),
-		Body:       bytes.NewReader(body),
-		Refresh:    "true",
-	}
-
-	res, err := req.Do(ctx, s.client.GetClient())
+	// Индексируем документ используя низкоуровневый API
+	res, err := s.client.GetClient().Index(
+		s.client.GetIndex(),
+		bytes.NewReader(body),
+		s.client.GetClient().Index.WithDocumentID(strconv.FormatInt(event.Id, 10)), // Добавлено
+		s.client.GetClient().Index.WithContext(ctx),
+		s.client.GetClient().Index.WithRefresh("true"),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to index event: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return fmt.Errorf("elasticsearch indexing failed: %s", res.String())
+		return fmt.Errorf("opensearch indexing failed: %s", res.Status())
 	}
 
 	s.log.Debug("Event indexed successfully",
 		"event_id", event.Id,
-		"index", s.client.GetClient(),
+		"index", s.client.GetIndex(),
 		"status", res.Status(),
 	)
 
 	return nil
 }
 
-// UpdateEvent обновляет событие в Elasticsearch
+// UpdateEvent обновляет событие в OpenSearch
 func (s *Service) UpdateEvent(ctx context.Context, event *db.Event) error {
 	// Для простоты используем полное переиндексирование
 	// В продакшене можно использовать partial update
 	return s.IndexEvent(ctx, event)
 }
 
-// DeleteEvent удаляет событие из Elasticsearch
+// DeleteEvent удаляет событие из OpenSearch
 func (s *Service) DeleteEvent(ctx context.Context, eventID int64) error {
-	req := esapi.DeleteRequest{
-		Index:      s.client.GetIndex(),
-		DocumentID: strconv.FormatInt(eventID, 10),
-		Refresh:    "true",
-	}
-
-	res, err := req.Do(ctx, s.client.GetClient())
+	res, err := s.client.GetClient().Delete(
+		s.client.GetIndex(),
+		strconv.FormatInt(eventID, 10),
+		s.client.GetClient().Delete.WithContext(ctx),
+		s.client.GetClient().Delete.WithRefresh("true"),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to delete event: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() && res.StatusCode != 404 {
-		return fmt.Errorf("elasticsearch deletion failed: %s", res.String())
+		return fmt.Errorf("opensearch deletion failed: %s", res.Status())
 	}
 
-	s.log.Debug("Event deleted from elasticsearch",
+	s.log.Debug("Event deleted from opensearch",
 		"event_id", eventID,
 		"status", res.Status(),
 	)
@@ -98,10 +96,10 @@ func (s *Service) DeleteEvent(ctx context.Context, eventID int64) error {
 	return nil
 }
 
-// SearchEvents идет события в Elasticsearch
+// SearchEvents ищет события в OpenSearch
 func (s *Service) SearchEvents(ctx context.Context, filter *SearchFilter) (*SearchResult, error) {
 	// Строим поисковый запрос
-	query := s.buildSearhQuery(filter)
+	query := s.buildSearchQuery(filter)
 
 	// Сериализуем запрос
 	queryBody, err := json.Marshal(query)
@@ -109,16 +107,15 @@ func (s *Service) SearchEvents(ctx context.Context, filter *SearchFilter) (*Sear
 		return nil, fmt.Errorf("failed to marshal search query: %w", err)
 	}
 
-	s.log.Debug("Elasticsearch search query", "query", string(queryBody))
+	s.log.Debug("OpenSearch search query", "query", string(queryBody))
 
 	// Выполняем поиск
-	req := esapi.SearchRequest{
-		Index: []string{s.client.GetIndex()},
-		Body:  bytes.NewReader(queryBody),
-	}
-
 	start := time.Now()
-	res, err := req.Do(ctx, s.client.GetClient())
+	res, err := s.client.GetClient().Search(
+		s.client.GetClient().Search.WithContext(ctx),
+		s.client.GetClient().Search.WithIndex(s.client.GetIndex()),
+		s.client.GetClient().Search.WithBody(bytes.NewReader(queryBody)),
+	)
 	searchTime := time.Since(start)
 
 	if err != nil {
@@ -127,7 +124,7 @@ func (s *Service) SearchEvents(ctx context.Context, filter *SearchFilter) (*Sear
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return nil, fmt.Errorf("failed to search via elasticsearch: %s", res.String())
+		return nil, fmt.Errorf("failed to search via opensearch: %s", res.Status())
 	}
 
 	// Парсим ответ
@@ -171,8 +168,8 @@ func (s *Service) SearchEvents(ctx context.Context, filter *SearchFilter) (*Sear
 	return result, nil
 }
 
-// buildSearhQuery строит запрос для Elasticsearch
-func (s *Service) buildSearhQuery(filter *SearchFilter) map[string]any {
+// buildSearchQuery строит запрос для OpenSearch (аналогично Elasticsearch)
+func (s *Service) buildSearchQuery(filter *SearchFilter) map[string]any {
 	query := map[string]any{
 		"from": filter.From,
 		"size": filter.Size,
@@ -200,9 +197,9 @@ func (s *Service) buildSearhQuery(filter *SearchFilter) map[string]any {
 		mustQueries = append(mustQueries, map[string]any{
 			"multi_match": map[string]any{
 				"query":     filter.Query,
-				"fields":    []string{"name^3", "description^2", "location^1"}, // Весовые коэффициенты
+				"fields":    []string{"name^3", "description^2", "location^1"},
 				"type":      "best_fields",
-				"fuzziness": "AUTO", // Автоматическая коррекция опечаток
+				"fuzziness": "AUTO",
 			},
 		})
 	}
@@ -223,7 +220,6 @@ func (s *Service) buildSearhQuery(filter *SearchFilter) map[string]any {
 				"price": rangeQuery,
 			},
 		})
-
 	}
 
 	// Фильтр по датам
@@ -341,19 +337,18 @@ func (s *Service) BulkIndexEvents(ctx context.Context, events []*db.Event) error
 	}
 
 	// Выполняем bulk запрос
-	req := esapi.BulkRequest{
-		Body:    bytes.NewReader(buf.Bytes()),
-		Refresh: "true",
-	}
-
-	res, err := req.Do(ctx, s.client.GetClient())
+	res, err := s.client.GetClient().Bulk(
+		strings.NewReader(buf.String()),
+		s.client.GetClient().Bulk.WithContext(ctx),
+		s.client.GetClient().Bulk.WithRefresh("true"),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to execute bulk request: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return fmt.Errorf("bulk indexing failed: %s", res.String())
+		return fmt.Errorf("bulk indexing failed: %s", res.Status())
 	}
 
 	s.log.Info("Bulk indexing completed",
@@ -364,7 +359,7 @@ func (s *Service) BulkIndexEvents(ctx context.Context, events []*db.Event) error
 	return nil
 }
 
-// Health проверяет состояние Elasticsearch
+// Health проверяет состояние OpenSearch
 func (s *Service) Health(ctx context.Context) error {
 	return s.client.Ping(ctx)
 }

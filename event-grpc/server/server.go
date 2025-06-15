@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	eventPb "github.com/rx3lixir/event-service/event-grpc/gen/go"
 	"github.com/rx3lixir/event-service/internal/db"
-	"github.com/rx3lixir/event-service/internal/elasticsearch"
+	"github.com/rx3lixir/event-service/internal/opensearch"
 	"github.com/rx3lixir/event-service/pkg/logger"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -16,12 +16,12 @@ import (
 
 type Server struct {
 	storer    *db.PostgresStore
-	esService *elasticsearch.Service
+	esService *opensearch.Service
 	eventPb.UnimplementedEventServiceServer
 	log logger.Logger
 }
 
-func NewServer(storer *db.PostgresStore, esService *elasticsearch.Service, log logger.Logger) *Server {
+func NewServer(storer *db.PostgresStore, esService *opensearch.Service, log logger.Logger) *Server {
 	return &Server{
 		storer:    storer,
 		esService: esService,
@@ -29,7 +29,7 @@ func NewServer(storer *db.PostgresStore, esService *elasticsearch.Service, log l
 	}
 }
 
-// CreateEvent создает новое событие и индексирует его в Elasticsearch.
+// CreateEvent создает новое событие и индексирует его в OpenSearch.
 func (s *Server) CreateEvent(ctx context.Context, req *eventPb.CreateEventReq) (*eventPb.EventRes, error) {
 	s.log.Info("CreateEvent request received",
 		"method", "CreateEvent",
@@ -60,9 +60,9 @@ func (s *Server) CreateEvent(ctx context.Context, req *eventPb.CreateEventReq) (
 		return nil, wrapError(err)
 	}
 
-	// Индексируем событие в Elasticsearch
+	// Индексируем событие в OpenSearch
 	if err := s.esService.IndexEvent(ctx, createdEvent); err != nil {
-		s.log.Error("failed to index event in Elasticsearch",
+		s.log.Error("failed to index event in OpenSearch",
 			"method", "CreateEvent",
 			"event_id", createdEvent.Id,
 			"error", err,
@@ -108,7 +108,7 @@ func (s *Server) GetEvent(ctx context.Context, req *eventPb.GetEventReq) (*event
 }
 
 // ListEvents получает список событий.
-// Если есть поисковый запрос (search_text), использует Elasticsearch.
+// Если есть поисковый запрос (search_text), использует OpenSearch.
 // Иначе использует PostgreSQL с фильтрами.
 func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*eventPb.ListEventsRes, error) {
 	s.log.Info("starting list events",
@@ -127,7 +127,7 @@ func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*e
 		"include_count", req.GetIncludeCount(),
 	)
 
-	// Если есть поисковый запрос, используем Elasticsearch
+	// Если есть поисковый запрос, используем OpenSearch
 	if req.SearchText != nil && req.GetSearchText() != "" {
 		return s.searchEventsWithElasticsearch(ctx, req)
 	}
@@ -136,16 +136,16 @@ func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*e
 	return s.listEventsWithPostgreSQL(ctx, req)
 }
 
-// searchEventsWithElasticsearch выполняет поиск через Elasticsearch
+// searchEventsWithElasticsearch выполняет поиск через OpenSearch
 func (s *Server) searchEventsWithElasticsearch(ctx context.Context, req *eventPb.ListEventsReq) (*eventPb.ListEventsRes, error) {
-	s.log.Debug("using Elasticsearch for search",
+	s.log.Debug("using OpenSearch for search",
 		"search_text", req.GetSearchText(),
 	)
 
-	// Конвертируем в фильтр Elasticsearch
-	filter, err := ProtoToElasticsearchFilter(req)
+	// Конвертируем в фильтр OpenSearch
+	filter, err := ProtoToOpenSearchFilter(req)
 	if err != nil {
-		s.log.Error("invalid Elasticsearch filter parameters",
+		s.log.Error("invalid OpenSearch filter parameters",
 			"method", "ListEvents",
 			"error", err,
 		)
@@ -155,7 +155,7 @@ func (s *Server) searchEventsWithElasticsearch(ctx context.Context, req *eventPb
 	// Выполняем поиск
 	result, err := s.esService.SearchEvents(ctx, filter)
 	if err != nil {
-		s.log.Error("failed to search events in Elasticsearch",
+		s.log.Error("failed to search events in OpenSearch",
 			"method", "ListEvents",
 			"error", err,
 			"filter", filter,
@@ -163,14 +163,14 @@ func (s *Server) searchEventsWithElasticsearch(ctx context.Context, req *eventPb
 		return nil, status.Error(codes.Internal, "search failed")
 	}
 
-	s.log.Info("Elasticsearch search completed",
+	s.log.Info("OpenSearch search completed",
 		"method", "ListEvents",
 		"events_found", result.Total,
 		"events_returned", len(result.Events),
 		"search_time", result.SearchTime,
 	)
 
-	return ElasticsearchResultToListEventsRes(result), nil
+	return OpenSearchResultToListEventsRes(result), nil
 }
 
 // listEventsWithPostgreSQL выполняет запрос через PostgreSQL
@@ -241,7 +241,7 @@ func (s *Server) listEventsWithPostgreSQL(ctx context.Context, req *eventPb.List
 	return response, nil
 }
 
-// UpdateEvent обновляет существующее событие в PostgreSQL и Elasticsearch
+// UpdateEvent обновляет существующее событие в PostgreSQL и OpenSearch
 func (s *Server) UpdateEvent(ctx context.Context, req *eventPb.UpdateEventReq) (*eventPb.EventRes, error) {
 	s.log.Info("starting update event",
 		"method", "UpdateEvent",
@@ -282,9 +282,9 @@ func (s *Server) UpdateEvent(ctx context.Context, req *eventPb.UpdateEventReq) (
 		return nil, wrapError(err)
 	}
 
-	// Обновляем в Elasticsearch
+	// Обновляем в OpenSearch
 	if err := s.esService.UpdateEvent(ctx, updatedEvent); err != nil {
-		s.log.Error("failed to update event in Elasticsearch",
+		s.log.Error("failed to update event in OpenSearch",
 			"method", "UpdateEvent",
 			"event_id", updatedEvent.Id,
 			"error", err,
@@ -300,7 +300,7 @@ func (s *Server) UpdateEvent(ctx context.Context, req *eventPb.UpdateEventReq) (
 	return DBEventToProtoEventRes(updatedEvent), nil
 }
 
-// DeleteEvent удаляет событие из PostgreSQL и Elasticsearch
+// DeleteEvent удаляет событие из PostgreSQL и OpenSearch
 func (s *Server) DeleteEvent(ctx context.Context, req *eventPb.DeleteEventReq) (*emptypb.Empty, error) {
 	s.log.Info("starting delete event",
 		"method", "DeleteEvent",
@@ -318,9 +318,9 @@ func (s *Server) DeleteEvent(ctx context.Context, req *eventPb.DeleteEventReq) (
 		return nil, wrapError(err)
 	}
 
-	// Удаляем из Elasticsearch
+	// Удаляем из OpenSearch
 	if err := s.esService.DeleteEvent(ctx, req.GetId()); err != nil {
-		s.log.Error("failed to delete event from Elasticsearch",
+		s.log.Error("failed to delete event from OpenSearch",
 			"method", "DeleteEvent",
 			"event_id", req.GetId(),
 			"error", err,

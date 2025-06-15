@@ -218,17 +218,17 @@ func ConsistencyChecker(consManager *consistency.Manager, maxIncon int, timeout 
 			"duration":        time.Since(start).Milliseconds(),
 			"is_consistent":   result.IsConsistent,
 			"total_events_db": result.TotalEventsDB,
-			"total_events_es": result.TotalEventsES,
+			"total_events_es": result.TotalEventsOS,
 			"check_timestamp": result.Timestamp,
 		}
 
 		// Подсчитываем общее кол-во проблем
-		totalProblems := len(result.MissingInES) + len(result.MissingInDB) + len(result.Mismatches)
+		totalProblems := len(result.MissingInOS) + len(result.MissingInDB) + len(result.Mismatches)
 
 		if totalProblems > 0 {
 			details["total_problems"] = totalProblems
 			details["problems"] = map[string]any{
-				"missing_in_es": len(result.MissingInES),
+				"missing_in_es": len(result.MissingInOS),
 				"missing_in_db": len(result.MissingInDB),
 				"mismatches":    len(result.Mismatches),
 			}
@@ -241,12 +241,12 @@ func ConsistencyChecker(consManager *consistency.Manager, maxIncon int, timeout 
 		}
 
 		// Добавляем детали о первых нескольких проблемах
-		if len(result.MissingInES) > 0 {
+		if len(result.MissingInOS) > 0 {
 			maxShow := 5
-			if len(result.MissingInES) < maxShow {
-				maxShow = len(result.MissingInES)
+			if len(result.MissingInOS) < maxShow {
+				maxShow = len(result.MissingInOS)
 			}
-			details["sample_missing_in_es"] = result.MissingInES[:maxShow]
+			details["sample_missing_in_es"] = result.MissingInOS[:maxShow]
 		}
 
 		if len(result.MissingInDB) > 0 {

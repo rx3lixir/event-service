@@ -10,13 +10,15 @@ import (
 	"time"
 
 	pb "github.com/rx3lixir/event-service/event-grpc/gen/go"
+
 	"github.com/rx3lixir/event-service/event-grpc/server"
 	"github.com/rx3lixir/event-service/internal/config"
 	"github.com/rx3lixir/event-service/internal/db"
-	"github.com/rx3lixir/event-service/internal/elasticsearch"
+	"github.com/rx3lixir/event-service/internal/opensearch"
 	"github.com/rx3lixir/event-service/pkg/consistency"
 	"github.com/rx3lixir/event-service/pkg/health"
 	"github.com/rx3lixir/event-service/pkg/logger"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -50,8 +52,8 @@ func main() {
 		"db_port", c.DB.Port,
 		"db_name", c.DB.DBName,
 		"server_address", c.Server.Address,
-		"elasticsearch_url", c.Elasticsearch.URL,
-		"elasticsearch_index", c.Elasticsearch.Index,
+		"opensearch_url", c.OpenSearch.URL,
+		"opensearch_index", c.OpenSearch.Index,
 	)
 
 	// Создаем пул соединений с базой данных
@@ -63,36 +65,36 @@ func main() {
 	defer pool.Close()
 	log.Info("Connected to PostgreSQL database")
 
-	// Создаем клиент Elasticsearch
-	esClient, err := elasticsearch.NewClient(c.Elasticsearch, log)
+	// Создаем клиент OpenSearch
+	osClient, err := opensearch.NewClient(c.OpenSearch, log)
 	if err != nil {
-		log.Error("Failed to create Elasticsearch client", "error", err)
+		log.Error("Failed to create OpenSearch client", "error", err)
 		os.Exit(1)
 	}
 
-	// Проверяем подключение к Elasticsearch
-	if err := esClient.Ping(ctx); err != nil {
-		log.Error("Failed to ping Elasticsearch", "error", err)
+	// Проверяем подключение к OpenSearch
+	if err := osClient.Ping(ctx); err != nil {
+		log.Error("Failed to ping OpenSearch", "error", err)
 		os.Exit(1)
 	}
-	log.Info("Connected to Elasticsearch")
+	log.Info("Connected to OpenSearch")
 
 	// Создаем индекс событий, если его нет
-	if err := esClient.CreateIndex(ctx); err != nil {
-		log.Error("Failed to create Elasticsearch index", "error", err)
+	if err := osClient.CreateIndex(ctx); err != nil {
+		log.Error("Failed to create OpenSearch index", "error", err)
 		os.Exit(1)
 	}
 
 	// Создаем сервисы
 	storer := db.NewPosgresStore(pool)
-	esService := elasticsearch.NewService(esClient, log)
+	osService := opensearch.NewService(osClient, log)
 
 	// Создаем менеджера консистентности
-	consistencyManager := consistency.New(storer, esService, log)
+	consistencyManager := consistency.New(storer, osService, log)
 
-	// Инициализируем данные в Elasticsearch (синхронизация с PostgreSQL)
-	if err := initializeElasticsearchData(ctx, storer, esService, log); err != nil {
-		log.Error("Failed to initialize Elasticsearch data", "error", err)
+	// Инициализируем данные в OpenSearch (синхронизация с PostgreSQL)
+	if err := initializeOpenSearchData(ctx, storer, osService, log); err != nil {
+		log.Error("Failed to initialize OpenSearch data", "error", err)
 		// Не завершаем работу, так как это не критическая ошибка
 	}
 
@@ -102,7 +104,7 @@ func main() {
 		if result, err := consistencyManager.CheckConsistency(ctx); err == nil {
 			if !result.IsConsistent {
 				log.Warn("Consistency check found issues",
-					"missing_in_es", len(result.MissingInES),
+					"missing_in_os", len(result.MissingInOS),
 					"missing_in_db", len(result.MissingInDB),
 					"mismatches", len(result.Mismatches),
 				)
@@ -111,7 +113,7 @@ func main() {
 	}()
 
 	// Создаем gRPC сервер
-	srv := server.NewServer(storer, esService, log)
+	srv := server.NewServer(storer, osService, log)
 
 	// Настраиваем gRPC сервер
 	grpcServer := grpc.NewServer(
@@ -131,7 +133,7 @@ func main() {
 
 	log.Info("Server is listening", "address", c.Server.Address)
 
-	// Создаем HealthCheck сервер с проверкой Elasticsearch
+	// Создаем HealthCheck сервер с проверкой OpenSearch
 	healthServer := health.NewServer(pool, consistencyManager, log,
 		health.WithServiceName("event-service"),
 		health.WithVersion("1.0.0"),
@@ -140,8 +142,8 @@ func main() {
 		health.WithRequiredTables("events", "categories"),
 	)
 
-	// Добавляем проверку Elasticsearch в health checker
-	healthServer.AddElasticsearchCheck(esService)
+	// Добавляем проверку OpenSearch в health checker
+	healthServer.AddOpenSearchCheck(osService)
 
 	// Запускаем серверы
 	errCh := make(chan error, 2)
@@ -179,9 +181,9 @@ func main() {
 	log.Info("Server stopped gracefully")
 }
 
-// initializeElasticsearchData синхронизирует данные между PostgreSQL и Elasticsearch
-func initializeElasticsearchData(ctx context.Context, storer *db.PostgresStore, esService *elasticsearch.Service, log logger.Logger) error {
-	log.Info("Initializing Elasticsearch data from PostgreSQL...")
+// initializeOpenSearchData синхронизирует данные между PostgreSQL и OpenSearch
+func initializeOpenSearchData(ctx context.Context, storer *db.PostgresStore, osService *opensearch.Service, log logger.Logger) error {
+	log.Info("Initializing OpenSearch data from PostgreSQL...")
 
 	// Получаем все события из PostgreSQL
 	events, err := storer.GetEvents(ctx)
@@ -190,16 +192,16 @@ func initializeElasticsearchData(ctx context.Context, storer *db.PostgresStore, 
 	}
 
 	if len(events) == 0 {
-		log.Info("No events found in PostgreSQL, skipping Elasticsearch initialization")
+		log.Info("No events found in PostgreSQL, skipping OpenSearch initialization")
 		return nil
 	}
 
-	// Массово индексируем события в Elasticsearch
-	if err := esService.BulkIndexEvents(ctx, events); err != nil {
+	// Массово индексируем события в OpenSearch
+	if err := osService.BulkIndexEvents(ctx, events); err != nil {
 		return fmt.Errorf("failed to bulk index events: %w", err)
 	}
 
-	log.Info("Elasticsearch initialization completed",
+	log.Info("OpenSearch initialization completed",
 		"events_indexed", len(events),
 	)
 

@@ -6,7 +6,7 @@ import (
 
 	eventPb "github.com/rx3lixir/event-service/event-grpc/gen/go"
 	"github.com/rx3lixir/event-service/internal/db"
-	"github.com/rx3lixir/event-service/internal/elasticsearch"
+	"github.com/rx3lixir/event-service/internal/opensearch"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -75,13 +75,13 @@ func ProtoToEventFilter(req *eventPb.ListEventsReq) (*db.EventFilter, error) {
 	return db.NewEventFilter(opts...), nil
 }
 
-// ProtoToElasticsearchFilter конвертирует ListEventsReq в фильтр для Elasticsearch
-func ProtoToElasticsearchFilter(req *eventPb.ListEventsReq) (*elasticsearch.SearchFilter, error) {
+// ProtoToOpenSearchFilter конвертирует ListEventsReq в фильтр для OpenSearch
+func ProtoToOpenSearchFilter(req *eventPb.ListEventsReq) (*opensearch.SearchFilter, error) {
 	if req == nil {
-		return elasticsearch.NewSearchFilter(), nil
+		return opensearch.NewSearchFilter(), nil
 	}
 
-	filter := elasticsearch.NewSearchFilter()
+	filter := opensearch.NewSearchFilter()
 
 	// Поисковый запрос (основное отличие от PostgreSQL фильтра)
 	if req.SearchText != nil && req.GetSearchText() != "" {
@@ -143,7 +143,7 @@ func ProtoToElasticsearchFilter(req *eventPb.ListEventsReq) (*elasticsearch.Sear
 		offset := int(req.GetOffset())
 
 		if limit == 0 {
-			limit = 20 // Для ES используем меньший лимит по умолчанию
+			limit = 20 // Для OS используем меньший лимит по умолчанию
 		}
 		filter.SetPagination(offset, limit)
 	}
@@ -241,8 +241,8 @@ func DBEventToProtoEventRes(event *db.Event) *eventPb.EventRes {
 	}
 }
 
-// ElasticsearchEventToProtoEventRes конвертирует elasticsearch.EventDocument в EventRes
-func ElasticsearchEventToProtoEventRes(doc *elasticsearch.EventDocument) *eventPb.EventRes {
+// OpenSearchEventToProtoEventRes конвертирует opensearch.EventDocument в EventRes
+func OpenSearchEventToProtoEventRes(doc *opensearch.EventDocument) *eventPb.EventRes {
 	if doc == nil {
 		return nil
 	}
@@ -282,15 +282,15 @@ func DBEventsToProtoEventsList(events []*db.Event) []*eventPb.EventRes {
 	return protoEvents
 }
 
-// ElasticsearchEventsToProtoEventsList конвертирует срез []*elasticsearch.EventDocument в []*eventPb.EventRes
-func ElasticsearchEventsToProtoEventsList(docs []*elasticsearch.EventDocument) []*eventPb.EventRes {
+// OpenSearchEventsToProtoEventsList конвертирует срез []*opensearch.EventDocument в []*eventPb.EventRes
+func OpenSearchEventsToProtoEventsList(docs []*opensearch.EventDocument) []*eventPb.EventRes {
 	if docs == nil {
 		return nil
 	}
 
 	protoEvents := make([]*eventPb.EventRes, 0, len(docs))
 	for _, doc := range docs {
-		protoEvents = append(protoEvents, ElasticsearchEventToProtoEventRes(doc))
+		protoEvents = append(protoEvents, OpenSearchEventToProtoEventRes(doc))
 	}
 
 	return protoEvents
@@ -310,17 +310,17 @@ func EventsToListEventsRes(events []*db.Event, totalCount *int64, limit, offset 
 	return response
 }
 
-// ElasticsearchResultToListEventsRes конвертирует результат поиска Elasticsearch в gRPC ответ
-func ElasticsearchResultToListEventsRes(result *elasticsearch.SearchResult) *eventPb.ListEventsRes {
+// OpenSearchResultToListEventsRes конвертирует результат поиска OpenSearch в gRPC ответ
+func OpenSearchResultToListEventsRes(result *opensearch.SearchResult) *eventPb.ListEventsRes {
 	response := &eventPb.ListEventsRes{
-		Events: ElasticsearchEventsToProtoEventsList(result.Events),
+		Events: OpenSearchEventsToProtoEventsList(result.Events),
 	}
 
 	// Добавляем мета-информацию о пагинации
 	response.Pagination = &eventPb.PaginationMeta{
 		TotalCount: result.Total,
 		Limit:      int32(len(result.Events)),
-		Offset:     0, // Elasticsearch использует from/size, здесь можно улучшить
+		Offset:     0, // OpenSearch использует from/size, здесь можно улучшить
 		HasMore:    result.Total > int64(len(result.Events)),
 	}
 

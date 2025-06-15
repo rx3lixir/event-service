@@ -1,4 +1,4 @@
-package elasticsearch
+package opensearch
 
 import (
 	"time"
@@ -6,7 +6,7 @@ import (
 	"github.com/rx3lixir/event-service/internal/db"
 )
 
-// EventDocument представляет документ события в Elasticsearch
+// EventDocument представляет документ события в OpenSearch
 type EventDocument struct {
 	ID           int64      `json:"id"`
 	Name         string     `json:"name"`
@@ -23,7 +23,7 @@ type EventDocument struct {
 	UpdatedAt    *time.Time `json:"updated_at"`
 }
 
-// SearchFilter представляет фильтры для поиска в Elasticsearch
+// SearchFilter представляет фильтры для поиска в OpenSearch
 type SearchFilter struct {
 	// Поисковый текст (полнотекстовый поиск по name, description, location)
 	Query string `json:"query,omitempty"`

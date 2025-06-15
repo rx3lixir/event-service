@@ -14,6 +14,7 @@ import (
 	"github.com/rx3lixir/event-service/internal/config"
 	"github.com/rx3lixir/event-service/internal/db"
 	"github.com/rx3lixir/event-service/internal/elasticsearch"
+	"github.com/rx3lixir/event-service/pkg/consistency"
 	"github.com/rx3lixir/event-service/pkg/health"
 	"github.com/rx3lixir/event-service/pkg/logger"
 	"google.golang.org/grpc"
@@ -86,11 +87,28 @@ func main() {
 	storer := db.NewPosgresStore(pool)
 	esService := elasticsearch.NewService(esClient, log)
 
+	// Создаем менеджера консистентности
+	consistencyManager := consistency.New(storer, esService, log)
+
 	// Инициализируем данные в Elasticsearch (синхронизация с PostgreSQL)
 	if err := initializeElasticsearchData(ctx, storer, esService, log); err != nil {
 		log.Error("Failed to initialize Elasticsearch data", "error", err)
 		// Не завершаем работу, так как это не критическая ошибка
 	}
+
+	// Запускаем проверку консистентности после инициализации
+	go func() {
+		time.Sleep(10 * time.Second)
+		if result, err := consistencyManager.CheckConsistency(ctx); err == nil {
+			if !result.IsConsistent {
+				log.Warn("Consistency check found issues",
+					"missing_in_es", len(result.MissingInES),
+					"missing_in_db", len(result.MissingInDB),
+					"mismatches", len(result.Mismatches),
+				)
+			}
+		}
+	}()
 
 	// Создаем gRPC сервер
 	srv := server.NewServer(storer, esService, log)
@@ -114,7 +132,7 @@ func main() {
 	log.Info("Server is listening", "address", c.Server.Address)
 
 	// Создаем HealthCheck сервер с проверкой Elasticsearch
-	healthServer := health.NewServer(pool, log,
+	healthServer := health.NewServer(pool, consistencyManager, log,
 		health.WithServiceName("event-service"),
 		health.WithVersion("1.0.0"),
 		health.WithPort(":8081"),

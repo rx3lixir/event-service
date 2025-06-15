@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rx3lixir/event-service/pkg/consistency"
 	"github.com/rx3lixir/event-service/pkg/logger"
 )
 
@@ -19,15 +20,18 @@ type ElasticsearchHealthChecker interface {
 
 // Server структура для healthcheck сервера
 type Server struct {
-	config Config
-	health *Health
-	server *http.Server
-	pool   *pgxpool.Pool
-	log    logger.Logger
+	config      Config
+	health      *Health
+	server      *http.Server
+	pool        *pgxpool.Pool
+	log         logger.Logger
+	consManager *consistency.Manager
+	maxIncon    int
+	timeout     time.Duration
 }
 
 // NewServer создает новый healthcheck сервер
-func NewServer(pool *pgxpool.Pool, log logger.Logger, opts ...Option) *Server {
+func NewServer(pool *pgxpool.Pool, manager *consistency.Manager, log logger.Logger, opts ...Option) *Server {
 	// Применяем дефолтную конфигурацию
 	config := defaultConfig()
 
@@ -44,10 +48,13 @@ func NewServer(pool *pgxpool.Pool, log logger.Logger, opts ...Option) *Server {
 	)
 
 	s := &Server{
-		config: config,
-		health: healthChecker,
-		pool:   pool,
-		log:    log,
+		config:      config,
+		health:      healthChecker,
+		maxIncon:    5,
+		timeout:     config.Timeout,
+		consManager: manager,
+		pool:        pool,
+		log:         log,
 	}
 
 	s.setupChecks()
@@ -69,6 +76,8 @@ func (s *Server) setupChecks() {
 		s.health.AddCheck("required_tables", SimpleTableChecker(s.pool, s.config.RequiredTables))
 	}
 
+	s.health.AddCheck("consistency", ConsistencyChecker(s.consManager, s.maxIncon, s.timeout))
+
 	s.log.Info("Health checks configured",
 		"service", s.config.ServiceName,
 		"version", s.config.Version,
@@ -79,6 +88,7 @@ func (s *Server) setupChecks() {
 		"tables_check", len(s.config.RequiredTables) > 0,
 		"required_tables", s.config.RequiredTables,
 		"migration_version", s.config.MigrationVersion,
+		"consistency_check", true,
 	)
 }
 

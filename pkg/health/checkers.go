@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rx3lixir/event-service/pkg/consistency"
 )
 
 // PostgresChecker проверка PostgreSQL через pgxpool
@@ -183,6 +184,77 @@ func SimpleTableChecker(pool *pgxpool.Pool, tables []string) Checker {
 			status = StatusDown
 			details["missing_tables"] = missingTables
 			details["error"] = fmt.Sprintf("Missing tables: %v", missingTables)
+		}
+
+		return CheckResult{
+			Status:  status,
+			Details: details,
+		}
+	})
+}
+
+func ConsistencyChecker(consManager *consistency.Manager, maxIncon int, timeout time.Duration) Checker {
+	return CheckerFunc(func(ctx context.Context) CheckResult {
+		checkctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+
+		start := time.Now()
+
+		// Выполняем проверку консистентности
+		result, err := consManager.CheckConsistency(checkctx)
+		if err != nil {
+			return CheckResult{
+				Status: StatusDown,
+				Error:  err.Error(),
+				Details: map[string]any{
+					"duration_ms": time.Since(start).Milliseconds(),
+				},
+			}
+		}
+
+		// Определяем статус на основе результатов
+		status := StatusUp
+		details := map[string]any{
+			"duration":        time.Since(start).Milliseconds(),
+			"is_consistent":   result.IsConsistent,
+			"total_events_db": result.TotalEventsDB,
+			"total_events_es": result.TotalEventsES,
+			"check_timestamp": result.Timestamp,
+		}
+
+		// Подсчитываем общее кол-во проблем
+		totalProblems := len(result.MissingInES) + len(result.MissingInDB) + len(result.Mismatches)
+
+		if totalProblems > 0 {
+			details["total_problems"] = totalProblems
+			details["problems"] = map[string]any{
+				"missing_in_es": len(result.MissingInES),
+				"missing_in_db": len(result.MissingInDB),
+				"mismatches":    len(result.Mismatches),
+			}
+		}
+
+		if totalProblems > maxIncon {
+			status = StatusDown
+			details["error"] = "too many consistency issues"
+			details["max_allowed"] = maxIncon
+		}
+
+		// Добавляем детали о первых нескольких проблемах
+		if len(result.MissingInES) > 0 {
+			maxShow := 5
+			if len(result.MissingInES) < maxShow {
+				maxShow = len(result.MissingInES)
+			}
+			details["sample_missing_in_es"] = result.MissingInES[:maxShow]
+		}
+
+		if len(result.MissingInDB) > 0 {
+			maxShow := 5
+			if len(result.MissingInDB) < maxShow {
+				maxShow = len(result.MissingInDB)
+			}
+			details["sample_missing_in_db"] = result.MissingInDB[:maxShow]
 		}
 
 		return CheckResult{

@@ -6,12 +6,13 @@ import (
 
 // Config конфигурация для health сервера
 type Config struct {
-	Port             string
-	ServiceName      string
-	Version          string
-	Timeout          time.Duration
-	RequiredTables   []string
-	MigrationVersion int // 0 = не проверять версию
+	Port               string
+	ServiceName        string
+	Version            string
+	Timeout            time.Duration
+	ConsistencyTimeout time.Duration
+	RequiredTables     []string
+	MigrationVersion   int // 0 = не проверять версию
 
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
@@ -24,15 +25,16 @@ type Option func(*Config)
 // defaultConfig возвращает конфигурацию по умолчанию
 func defaultConfig() Config {
 	return Config{
-		Port:             ":8081",
-		ServiceName:      "unknown-service",
-		Version:          "unknown",
-		Timeout:          5 * time.Second,
-		RequiredTables:   []string{},
-		MigrationVersion: 0, // 0 = не проверять версию
-		ReadTimeout:      10 * time.Second,
-		WriteTimeout:     10 * time.Second,
-		IdleTimeout:      60 * time.Second,
+		Port:               ":8081",
+		ServiceName:        "unknown-service",
+		Version:            "unknown",
+		Timeout:            5 * time.Second,
+		ConsistencyTimeout: 6 * time.Hour,
+		RequiredTables:     []string{},
+		MigrationVersion:   0, // 0 = не проверять версию
+		ReadTimeout:        10 * time.Second,
+		WriteTimeout:       10 * time.Second,
+		IdleTimeout:        60 * time.Second,
 	}
 }
 

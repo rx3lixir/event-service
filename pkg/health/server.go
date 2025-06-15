@@ -46,7 +46,7 @@ func NewServer(pool *pgxpool.Pool, manager *consistency.Manager, log logger.Logg
 		config:      config,
 		health:      healthChecker,
 		maxIncon:    5,
-		timeout:     config.Timeout,
+		timeout:     config.ConsistencyTimeout,
 		consManager: manager,
 		pool:        pool,
 		log:         log,

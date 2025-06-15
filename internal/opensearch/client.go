@@ -67,7 +67,7 @@ func (c *Client) Ping(ctx context.Context) error {
 	return nil
 }
 
-// CreateIndex создает индекс для событий, если его не существует
+// Исправленная версия CreateIndex в internal/opensearch/client.go
 func (c *Client) CreateIndex(ctx context.Context) error {
 	// Проверяем, существует ли индекс
 	res, err := c.os.Indices.Exists(
@@ -85,21 +85,16 @@ func (c *Client) CreateIndex(ctx context.Context) error {
 		return nil
 	}
 
-	// Создаем индекс с маппингом
+	// Упрощенный маппинг без специфичных анализаторов
 	mapping := `{
 		"settings": {
 			"number_of_shards": 1,
 			"number_of_replicas": 0,
 			"analysis": {
 				"analyzer": {
-					"russian_analyzer": {
-						"type": "custom",
-						"tokenizer": "standard",
-						"filter": [
-							"lowercase",
-							"russian_morphology",
-							"english_morphology"
-						]
+					"text_analyzer": {
+						"type": "standard",
+						"stopwords": "_russian_"
 					}
 				}
 			}
@@ -111,7 +106,7 @@ func (c *Client) CreateIndex(ctx context.Context) error {
 				},
 				"name": {
 					"type": "text",
-					"analyzer": "russian_analyzer",
+					"analyzer": "text_analyzer",
 					"fields": {
 						"keyword": {
 							"type": "keyword"
@@ -120,7 +115,7 @@ func (c *Client) CreateIndex(ctx context.Context) error {
 				},
 				"description": {
 					"type": "text",
-					"analyzer": "russian_analyzer"
+					"analyzer": "text_analyzer"
 				},
 				"category_id": {
 					"type": "long"
@@ -129,15 +124,14 @@ func (c *Client) CreateIndex(ctx context.Context) error {
 					"type": "keyword"
 				},
 				"date": {
-					"type": "date",
-					"format": "yyyy-MM-dd||strict_date_optional_time||epoch_millis"
+					"type": "keyword"
 				},
 				"time": {
 					"type": "keyword"
 				},
 				"location": {
 					"type": "text",
-					"analyzer": "russian_analyzer",
+					"analyzer": "text_analyzer",
 					"fields": {
 						"keyword": {
 							"type": "keyword"
@@ -175,6 +169,12 @@ func (c *Client) CreateIndex(ctx context.Context) error {
 	defer res.Body.Close()
 
 	if res.IsError() {
+		// Читаем тело ответа для получения детальной информации об ошибке
+		body := make([]byte, 1024)
+		if n, readErr := res.Body.Read(body); readErr == nil && n > 0 {
+			c.log.Error("OpenSearch index creation failed", "status", res.Status(), "response", string(body[:n]))
+			return fmt.Errorf("failed to create index, status: %s, response: %s", res.Status(), string(body[:n]))
+		}
 		return fmt.Errorf("failed to create index, status: %s", res.Status())
 	}
 

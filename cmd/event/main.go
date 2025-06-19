@@ -100,7 +100,7 @@ func main() {
 
 	// Запускаем проверку консистентности после инициализации
 	go func() {
-		time.Sleep(10 * time.Second)
+		osService.WaitForHealthy(ctx, 3, time.Second*5)
 		if result, err := consistencyManager.CheckConsistency(ctx); err == nil {
 			if !result.IsConsistent {
 				log.Warn("Consistency check found issues",

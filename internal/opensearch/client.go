@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/opensearch-project/opensearch-go"
@@ -85,78 +87,15 @@ func (c *Client) CreateIndex(ctx context.Context) error {
 		return nil
 	}
 
-	// Упрощенный маппинг без специфичных анализаторов
-	mapping := `{
-		"settings": {
-			"number_of_shards": 1,
-			"number_of_replicas": 0,
-			"analysis": {
-				"analyzer": {
-					"text_analyzer": {
-						"type": "standard",
-						"stopwords": "_russian_"
-					}
-				}
-			}
-		},
-		"mappings": {
-			"properties": {
-				"id": {
-					"type": "long"
-				},
-				"name": {
-					"type": "text",
-					"analyzer": "text_analyzer",
-					"fields": {
-						"keyword": {
-							"type": "keyword"
-						}
-					}
-				},
-				"description": {
-					"type": "text",
-					"analyzer": "text_analyzer"
-				},
-				"category_id": {
-					"type": "long"
-				},
-				"category_name": {
-					"type": "keyword"
-				},
-				"date": {
-					"type": "keyword"
-				},
-				"time": {
-					"type": "keyword"
-				},
-				"location": {
-					"type": "text",
-					"analyzer": "text_analyzer",
-					"fields": {
-						"keyword": {
-							"type": "keyword"
-						}
-					}
-				},
-				"price": {
-					"type": "float"
-				},
-				"image": {
-					"type": "keyword",
-					"index": false
-				},
-				"source": {
-					"type": "keyword"
-				},
-				"created_at": {
-					"type": "date"
-				},
-				"updated_at": {
-					"type": "date"
-				}
-			}
-		}
-	}`
+	// Получаем рабочую директорию
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("не удалось получить рабочую директорию: %s", err)
+	}
+
+	// Получаем маппинг из mapping.json
+	mappingBytes, err := os.ReadFile(filepath.Join(cwd, "mapping.json"))
+	mapping := string(mappingBytes)
 
 	res, err = c.os.Indices.Create(
 		c.index,

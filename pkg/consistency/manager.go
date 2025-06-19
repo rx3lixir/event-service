@@ -15,7 +15,7 @@ import (
 // между PostgreSQL и OpenSearch
 type Manager struct {
 	store         *db.PostgresStore
-	osService     *opensearch.Service // Заменили esService на osService
+	osService     *opensearch.Service
 	log           logger.Logger
 	mu            sync.RWMutex
 	lastCheck     *CheckResult

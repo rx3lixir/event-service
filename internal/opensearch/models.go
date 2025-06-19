@@ -23,6 +23,39 @@ type EventDocument struct {
 	UpdatedAt    *time.Time `json:"updated_at"`
 }
 
+// PrepareForIndex подготавливает документ для индексации с completion полями
+func (e *EventDocument) PrepareForIndex() map[string]any {
+	doc := map[string]any{
+		"id":          e.ID,
+		"name":        e.Name,
+		"description": e.Description,
+		"category_id": e.CategoryID,
+		"date":        e.Date,
+		"time":        e.Time,
+		"location":    e.Location,
+		"price":       e.Price,
+		"image":       e.Image,
+		"source":      e.Source,
+		"created_at":  e.CreatedAt,
+		"updated_at":  e.UpdatedAt,
+	}
+
+	// Добавляем данные для completion suggester
+	doc["name.completion"] = map[string]any{
+		"input":  []string{e.Name},
+		"weight": 10,
+	}
+
+	if e.Location != "" {
+		doc["location.completion"] = map[string]any{
+			"input":  []string{e.Location},
+			"weight": 5,
+		}
+	}
+
+	return doc
+}
+
 // SearchFilter представляет фильтры для поиска в OpenSearch
 type SearchFilter struct {
 	// Поисковый текст (полнотекстовый поиск по name, description, location)

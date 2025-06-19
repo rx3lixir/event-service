@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,13 +27,46 @@ func NewService(client *Client, log logger.Logger) *Service {
 	}
 }
 
+// WaitForHealthy ждет проверки здоровья
+// WaitForHealthy ждёт пока OpenSearch станет доступным
+func (s *Service) WaitForHealthy(ctx context.Context, maxRetries int, retryInterval time.Duration) error {
+	s.log.Info("Waiting for OpenSearch to become healthy",
+		"max_retries", maxRetries,
+		"retry_interval", retryInterval)
+
+	for i := 0; i < maxRetries; i++ {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for OpenSearch: %w", ctx.Err())
+		default:
+		}
+
+		if err := s.Health(ctx); err == nil {
+			s.log.Info("OpenSearch is healthy", "attempts", i+1)
+			return nil
+		}
+
+		if i < maxRetries-1 { // Не спим после последней попытки
+			s.log.Warn("OpenSearch not ready, retrying",
+				"attempt", i+1,
+				"max_retries", maxRetries,
+				"next_retry_in", retryInterval)
+			time.Sleep(retryInterval)
+		}
+	}
+
+	return fmt.Errorf("opensearch not healthy after %d retries", maxRetries)
+}
+
 // IndexEvent индексирует событие в OpenSearch
 func (s *Service) IndexEvent(ctx context.Context, event *db.Event) error {
 	// Конвертируем в документ OS
 	doc := NewEventDocumentFromDB(event)
 
+	docData := doc.PrepareForIndex()
+
 	// Сериализуем в JSON
-	body, err := json.Marshal(doc)
+	body, err := json.Marshal(docData)
 	if err != nil {
 		return fmt.Errorf("failed to marshal event document: %w", err)
 	}
@@ -187,8 +219,8 @@ func (s *Service) GetSuggestions(ctx context.Context, req *SuggestionRequest) (*
 		req.Fields = []string{"name", "location"}
 	}
 
-	// Строим запрос для OpenSearch
-	query := s.buildSuggestionQuery(req)
+	// Строим запрос для OpenSearch через Completion Suggester API
+	query := s.buildCompletionSuggesionQuery(req)
 
 	queryBody, err := json.Marshal(query)
 	if err != nil {
@@ -213,150 +245,19 @@ func (s *Service) GetSuggestions(ctx context.Context, req *SuggestionRequest) (*
 	}
 
 	// Парсим ответ
-	var response struct {
-		Hits struct {
-			Hits []struct {
-				Source EventDocument `json:"_source"`
-				Score  float64       `json:"_score"`
-			} `json:"hits"`
-		} `json:"hits"`
-	}
-
+	var response map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
-		return nil, fmt.Errorf("failed to decode suggestion response: %w", err)
+		return nil, fmt.Errorf("failed to decode suggestion search: %s", res.Status())
 	}
 
-	// Формируем предложения
-	suggestions := s.extractSuggestions(response.Hits.Hits, req)
+	// Извлекаем suggestions
+	suggestions := s.extractCompletionSuggestions(response, req)
 
 	return &SuggestionResponse{
 		Suggesions: suggestions,
 		Query:      req.Query,
 		Total:      len(suggestions),
 	}, nil
-}
-
-// buildSuggestionQuery строит запрос для автокомплита
-func (s *Service) buildSuggestionQuery(req *SuggestionRequest) map[string]any {
-	// Используем prefix query для быстрого автокомплита
-	query := map[string]any{
-		"size": req.MaxResults,
-		"query": map[string]any{
-			"bool": map[string]any{
-				"should": []any{},
-			},
-		},
-		// Группируем по тексту для избежания дублей
-		"aggs": map[string]any{
-			"unique_suggestions": map[string]any{
-				"terms": map[string]any{
-					"field": "name.keyword",
-					"size":  req.MaxResults,
-				},
-			},
-		},
-	}
-
-	var shouldQueries []any
-
-	for _, field := range req.Fields {
-		// Prefix query для быстрого поиска по началу слова
-		shouldQueries = append(shouldQueries, map[string]any{
-			"prefix": map[string]any{
-				field + ".keyword": map[string]any{
-					"value": strings.ToLower(req.Query),
-					"boost": 3.0, // Точное совпадение в начале - выше вес
-				},
-			},
-		})
-
-		// Match phrase prefix для поиска по началу фразы
-		shouldQueries = append(shouldQueries, map[string]any{
-			"match_phrase_prefix": map[string]any{
-				field: map[string]any{
-					"query":          req.Query,
-					"max_expansions": 10,
-					"boost":          2.0,
-				},
-			},
-		})
-
-		// Wildcard для поиска подстроки в середине
-		shouldQueries = append(shouldQueries, map[string]any{
-			"wildcard": map[string]any{
-				field + ".keyword": map[string]any{
-					"value": fmt.Sprintf("*%s*", strings.ToLower(req.Query)),
-					"boost": 1.0,
-				},
-			},
-		})
-	}
-
-	query["query"].(map[string]any)["bool"].(map[string]any)["should"] = shouldQueries
-
-	return query
-}
-
-// extractSuggestions извлекает предложения из результатов поиска
-func (s *Service) extractSuggestions(hits []struct {
-	Source EventDocument `json:"_source"`
-	Score  float64       `json:"_score"`
-}, req *SuggestionRequest) []Suggestion {
-
-	suggestions := make([]Suggestion, 0)
-	seen := make(map[string]bool) // Для избежания дублей
-
-	for _, hit := range hits {
-		event := hit.Source
-
-		// Нормализуем score к диапазону 0-1
-		normalizedScore := hit.Score / 10.0
-		if normalizedScore > 1.0 {
-			normalizedScore = 1.0
-		}
-
-		// Предложения на основе названия события
-		if containsQuery(event.Name, req.Query) {
-			text := event.Name
-			key := "name:" + text
-			if !seen[key] {
-				suggestions = append(suggestions, Suggestion{
-					Text:     text,
-					Score:    normalizedScore,
-					Type:     "event",
-					Category: getCategoryName(event.CategoryID),
-					EventID:  &event.ID,
-				})
-				seen[key] = true
-			}
-		}
-
-		// Предложения на основе локации
-		if containsQuery(event.Location, req.Query) {
-			text := event.Location
-			key := "location:" + text
-			if !seen[key] {
-				suggestions = append(suggestions, Suggestion{
-					Text:  text,
-					Score: normalizedScore * 0.8, // Локации чуть меньший вес
-					Type:  "location",
-				})
-				seen[key] = true
-			}
-		}
-	}
-
-	// Сортируем по релевантности
-	sort.Slice(suggestions, func(i, j int) bool {
-		return suggestions[i].Score > suggestions[j].Score
-	})
-
-	// Ограничиваем количество
-	if len(suggestions) > req.MaxResults {
-		suggestions = suggestions[:req.MaxResults]
-	}
-
-	return suggestions
 }
 
 // buildSearchQuery строит запрос для OpenSearch (аналогично Elasticsearch)
@@ -435,7 +336,7 @@ func (s *Service) buildSearchQuery(filter *SearchFilter) map[string]any {
 	if filter.Location != nil {
 		filterQueries = append(filterQueries, map[string]any{
 			"term": map[string]any{
-				"location.keyword": *filter.Location,
+				"location": *filter.Location,
 			},
 		})
 	}

@@ -4,48 +4,57 @@ import "time"
 
 // Event представляет событие в системе
 type Event struct {
-	Id          int64      `json:"id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	CategoryID  int64      `json:"category_id"`
-	Date        string     `json:"date"` // Рассмотри возможность использования time.Time или отдельных полей для большей строгости
-	Time        string     `json:"time"` // Аналогично, можно использовать более строгий тип или валидацию
-	Location    string     `json:"location"`
-	Price       float32    `json:"price"`
-	Image       string     `json:"image"`  // URL или путь к файлу
-	Source      string     `json:"source"` // Источник события
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   *time.Time `json:"updated_at"` // Указатель, чтобы отразить NULL из БД, если не обновлялось
+	Id          int64
+	Name        string
+	Description string
+	CategoryID  int64
+	Date        string
+	Time        string
+	Location    string
+	Price       float32
+	Image       string
+	Source      string
+	CreatedAt   time.Time
+	UpdatedAt   *time.Time
 }
 
-// CreateEventParams содержит параметры для создания нового события.
-// Используется вместо передачи всей структуры Event, чтобы избежать путаницы с Id, CreatedAt, UpdatedAt.
+// CreateEventParams содержит параметры для создания нового события
 type CreateEventParams struct {
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	CategoryID  int64   `json:"category_id"`
-	Date        string  `json:"date"`
-	Time        string  `json:"time"`
-	Location    string  `json:"location"`
-	Price       float32 `json:"price"`
-	Image       string  `json:"image"`
-	Source      string  `json:"source"`
+	Name        string
+	Description string
+	CategoryID  int64
+	Date        string
+	Time        string
+	Location    string
+	Price       float32
+	Image       string
+	Source      string
 }
 
-// UpdateEventParams содержит параметры для обновления существующего события.
-// Используй указатели для полей, которые могут быть опционально обновлены (для PATCH),
-// или все поля, если это всегда полное обновление (PUT).
-// Для простоты, здесь предполагается полное обновление полей, кроме Id, CreatedAt.
+// UpdateEventParams содержит параметры для обновления существующего события
 type UpdateEventParams struct {
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	CategoryID  int64   `json:"category_id"`
-	Date        string  `json:"date"`
-	Time        string  `json:"time"`
-	Location    string  `json:"location"`
-	Price       float32 `json:"price"`
-	Image       string  `json:"image"`
-	Source      string  `json:"source"`
+	Name        string
+	Description string
+	CategoryID  int64
+	Date        string
+	Time        string
+	Location    string
+	Price       float32
+	Image       string
+	Source      string
+}
+
+// Category представляет категорию событий
+type Category struct {
+	Id        int
+	Name      string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// CreateCategoryReq представляет запрос на создание новой категории
+type CreateCategoryReq struct {
+	Name string
 }
 
 // NewEventFromCreateRequest создает новый экземпляр Event на основе параметров создания.
@@ -81,19 +90,6 @@ func (e *Event) ApplyUpdate(params UpdateEventParams) {
 	e.Source = params.Source
 	// ID и CreatedAt не должны меняться здесь.
 	// UpdatedAt будет обновлен базой данных или методом хранилища.
-}
-
-// Category представляет категорию событий
-type Category struct {
-	Id        int       `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// CreateCategoryReq представляет запрос на создание новой категории
-type CreateCategoryReq struct {
-	Name string `json:"name"`
 }
 
 // NewCategory создает новую категорию из запроса

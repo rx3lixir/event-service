@@ -7,6 +7,7 @@ import (
 	eventPb "github.com/rx3lixir/event-service/event-grpc/gen/go"
 	"github.com/rx3lixir/event-service/internal/db"
 	"github.com/rx3lixir/event-service/internal/opensearch"
+	"github.com/rx3lixir/event-service/internal/opensearch/models"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -76,7 +77,7 @@ func ProtoToEventFilter(req *eventPb.ListEventsReq) (*db.EventFilter, error) {
 }
 
 // ProtoToOpenSearchFilter конвертирует ListEventsReq в фильтр для OpenSearch
-func ProtoToOpenSearchFilter(req *eventPb.ListEventsReq) (*opensearch.SearchFilter, error) {
+func ProtoToOpenSearchFilter(req *eventPb.ListEventsReq) (*opensearch, error) {
 	if req == nil {
 		return opensearch.NewSearchFilter(), nil
 	}
@@ -242,7 +243,7 @@ func DBEventToProtoEventRes(event *db.Event) *eventPb.EventRes {
 }
 
 // OpenSearchEventToProtoEventRes конвертирует opensearch.EventDocument в EventRes
-func OpenSearchEventToProtoEventRes(doc *opensearch.EventDocument) *eventPb.EventRes {
+func OpenSearchEventToProtoEventRes(doc *models.EventDocument) *eventPb.EventRes {
 	if doc == nil {
 		return nil
 	}
@@ -283,7 +284,7 @@ func DBEventsToProtoEventsList(events []*db.Event) []*eventPb.EventRes {
 }
 
 // OpenSearchEventsToProtoEventsList конвертирует срез []*opensearch.EventDocument в []*eventPb.EventRes
-func OpenSearchEventsToProtoEventsList(docs []*opensearch.EventDocument) []*eventPb.EventRes {
+func OpenSearchEventsToProtoEventsList(docs []*models.EventDocument) []*eventPb.EventRes {
 	if docs == nil {
 		return nil
 	}
@@ -311,7 +312,7 @@ func EventsToListEventsRes(events []*db.Event, totalCount *int64, limit, offset 
 }
 
 // OpenSearchResultToListEventsRes конвертирует результат поиска OpenSearch в gRPC ответ
-func OpenSearchResultToListEventsRes(result *opensearch.SearchResult) *eventPb.ListEventsRes {
+func OpenSearchResultToListEventsRes(result *models.SearchResult) *eventPb.ListEventsRes {
 	response := &eventPb.ListEventsRes{
 		Events: OpenSearchEventsToProtoEventsList(result.Events),
 	}

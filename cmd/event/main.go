@@ -13,8 +13,10 @@ import (
 
 	"github.com/rx3lixir/event-service/event-grpc/server"
 	"github.com/rx3lixir/event-service/internal/config"
+	"github.com/rx3lixir/event-service/internal/dataloader"
 	"github.com/rx3lixir/event-service/internal/db"
 	"github.com/rx3lixir/event-service/internal/opensearch"
+	"github.com/rx3lixir/event-service/internal/opensearch/client"
 	"github.com/rx3lixir/event-service/pkg/consistency"
 	"github.com/rx3lixir/event-service/pkg/health"
 	"github.com/rx3lixir/event-service/pkg/logger"
@@ -65,52 +67,53 @@ func main() {
 	defer pool.Close()
 	log.Info("Connected to PostgreSQL database")
 
-	// Создаем клиент OpenSearch
-	osClient, err := opensearch.NewClient(c.OpenSearch, log)
+	// Создаем конфигурацию OpenSearch
+	osConfig := client.DefaultConfig()
+	osConfig.URL = c.OpenSearch.URL
+	osConfig.IndexName = c.OpenSearch.Index
+	osConfig.Timeout = time.Duration(c.OpenSearch.MaxRetries)
+
+	// Создаем OpenSearch сервис
+	osService, err := opensearch.NewService(osConfig, log)
 	if err != nil {
-		log.Error("Failed to create OpenSearch client", "error", err)
+		log.Error("Failed to create OpenSearch service", "error", err)
 		os.Exit(1)
 	}
 
-	// Проверяем подключение к OpenSearch
-	if err := osClient.Ping(ctx); err != nil {
-		log.Error("Failed to ping OpenSearch", "error", err)
+	// Инициализация OpenSearch
+	if err := osService.Initialize(ctx); err != nil {
+		log.Error("Failed to initialize OpenSearch", "error", err)
 		os.Exit(1)
 	}
-	log.Info("Connected to OpenSearch")
 
-	// Создаем индекс событий, если его нет
-	if err := osClient.CreateIndex(ctx); err != nil {
-		log.Error("Failed to create OpenSearch index", "error", err)
-		os.Exit(1)
-	}
+	log.Info("OpenSearch initialized successfully")
 
 	// Создаем сервисы
 	storer := db.NewPosgresStore(pool)
-	osService := opensearch.NewService(osClient, log)
+
+	// Создаем dataloader для синхронизации данных
+	loader := dataloader.NewLoader(storer, osService, log)
+
+	// Синхронизация данных при старте
+	if err := loader.InitializeOpenSearchData(ctx); err != nil {
+		log.Error("Failed to init OpenSearch data", "error", err)
+		os.Exit(1)
+	}
+
+	// Проверяем статус синхронизации
+	syncStatus, err := loader.CheckSyncStatus(ctx)
+	if err != nil {
+		log.Warn("Failed to check sync status", "error", err)
+	} else {
+		log.Info("Data synchronization status",
+			"postgresql_count", syncStatus.PostgreSQLCount,
+			"opensearch_count", syncStatus.OpenSearchCount,
+			"in_sync", syncStatus.InSync,
+			"difference", syncStatus.Difference)
+	}
 
 	// Создаем менеджера консистентности
 	consistencyManager := consistency.New(storer, osService, log)
-
-	// Инициализируем данные в OpenSearch (синхронизация с PostgreSQL)
-	if err := initializeOpenSearchData(ctx, storer, osService, log); err != nil {
-		log.Error("Failed to initialize OpenSearch data", "error", err)
-		// Не завершаем работу, так как это не критическая ошибка
-	}
-
-	// Запускаем проверку консистентности после инициализации
-	go func() {
-		osService.WaitForHealthy(ctx, 3, time.Second*5)
-		if result, err := consistencyManager.CheckConsistency(ctx); err == nil {
-			if !result.IsConsistent {
-				log.Warn("Consistency check found issues",
-					"missing_in_os", len(result.MissingInOS),
-					"missing_in_db", len(result.MissingInDB),
-					"mismatches", len(result.Mismatches),
-				)
-			}
-		}
-	}()
 
 	// Создаем gRPC сервер
 	srv := server.NewServer(storer, osService, log)
@@ -179,31 +182,4 @@ func main() {
 	}
 
 	log.Info("Server stopped gracefully")
-}
-
-// initializeOpenSearchData синхронизирует данные между PostgreSQL и OpenSearch
-func initializeOpenSearchData(ctx context.Context, storer *db.PostgresStore, osService *opensearch.Service, log logger.Logger) error {
-	log.Info("Initializing OpenSearch data from PostgreSQL...")
-
-	// Получаем все события из PostgreSQL
-	events, err := storer.GetEvents(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get events from PostgreSQL: %w", err)
-	}
-
-	if len(events) == 0 {
-		log.Info("No events found in PostgreSQL, skipping OpenSearch initialization")
-		return nil
-	}
-
-	// Массово индексируем события в OpenSearch
-	if err := osService.BulkIndexEvents(ctx, events); err != nil {
-		return fmt.Errorf("failed to bulk index events: %w", err)
-	}
-
-	log.Info("OpenSearch initialization completed",
-		"events_indexed", len(events),
-	)
-
-	return nil
 }

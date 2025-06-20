@@ -6,8 +6,8 @@ import (
 
 	eventPb "github.com/rx3lixir/event-service/event-grpc/gen/go"
 	"github.com/rx3lixir/event-service/internal/db"
-	"github.com/rx3lixir/event-service/internal/opensearch"
 	"github.com/rx3lixir/event-service/internal/opensearch/models"
+	"github.com/rx3lixir/event-service/internal/opensearch/search"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -77,21 +77,21 @@ func ProtoToEventFilter(req *eventPb.ListEventsReq) (*db.EventFilter, error) {
 }
 
 // ProtoToOpenSearchFilter конвертирует ListEventsReq в фильтр для OpenSearch
-func ProtoToOpenSearchFilter(req *eventPb.ListEventsReq) (*opensearch, error) {
+func ProtoToOpenSearchFilter(req *eventPb.ListEventsReq) (*search.Filter, error) {
 	if req == nil {
-		return opensearch.NewSearchFilter(), nil
+		return search.NewFilter(), nil
 	}
 
-	filter := opensearch.NewSearchFilter()
+	filter := search.NewFilter()
 
 	// Поисковый запрос (основное отличие от PostgreSQL фильтра)
 	if req.SearchText != nil && req.GetSearchText() != "" {
-		filter.SetQuery(req.GetSearchText())
+		filter.WithQuery(req.GetSearchText())
 	}
 
 	// Фильтр по категориям
 	if len(req.GetCategoryIDs()) > 0 {
-		filter.SetCategories(req.GetCategoryIDs()...)
+		filter.WithCategories(req.GetCategoryIDs()...)
 	}
 
 	// Фильтр по диапазону цен
@@ -105,7 +105,7 @@ func ProtoToOpenSearchFilter(req *eventPb.ListEventsReq) (*opensearch, error) {
 			maxVal := req.GetMaxPrice()
 			maxPrice = &maxVal
 		}
-		filter.SetPriceRange(minPrice, maxPrice)
+		filter.WithPriceRange(minPrice, maxPrice)
 	}
 
 	// Фильтр по диапазону дат
@@ -125,17 +125,17 @@ func ProtoToOpenSearchFilter(req *eventPb.ListEventsReq) (*opensearch, error) {
 		}
 	}
 	if dateFrom != nil || dateTo != nil {
-		filter.SetDateRange(dateFrom, dateTo)
+		filter.WithDateRange(dateFrom, dateTo)
 	}
 
 	// Фильтр по локации
 	if req.Location != nil {
-		filter.SetLocation(req.GetLocation())
+		filter.WithLocation(req.GetLocation())
 	}
 
 	// Фильтр по источнику
 	if req.Source != nil {
-		filter.SetSource(req.GetSource())
+		filter.WithSource(req.GetSource())
 	}
 
 	// Пагинация
@@ -146,7 +146,7 @@ func ProtoToOpenSearchFilter(req *eventPb.ListEventsReq) (*opensearch, error) {
 		if limit == 0 {
 			limit = 20 // Для OS используем меньший лимит по умолчанию
 		}
-		filter.SetPagination(offset, limit)
+		filter.WithPagination(offset, limit)
 	}
 
 	return filter, nil

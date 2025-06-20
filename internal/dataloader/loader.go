@@ -41,7 +41,7 @@ func (l *Loader) InitializeOpenSearchData(ctx context.Context) error {
 	}
 
 	// Проверяем, есть ли уже данные в OpenSearch
-	filter := search.NewFilter().SetPagination(0, 1)
+	filter := search.NewFilter().WithPagination(0, 1)
 	existingResult, err := l.osService.SearchEvents(ctx, filter)
 	if err != nil {
 		l.logger.Warn("Failed to check existing OpenSearch data, proceeding with initialization", "error", err)
@@ -170,7 +170,7 @@ func (l *Loader) CheckSyncStatus(ctx context.Context) (*SyncStatus, error) {
 	pgCount := len(pgEvents)
 
 	// Получаем количество событий в OpenSearch
-	filter := search.NewFilter().SetPagination(0, 0) // Только count
+	filter := search.NewFilter().WithPagination(0, 0) // Только count
 	osResult, err := l.osService.SearchEvents(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get OpenSearch events count: %w", err)

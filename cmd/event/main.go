@@ -71,7 +71,7 @@ func main() {
 	osConfig := client.DefaultConfig()
 	osConfig.URL = c.OpenSearch.URL
 	osConfig.IndexName = c.OpenSearch.Index
-	osConfig.Timeout = time.Duration(c.OpenSearch.MaxRetries)
+	osConfig.Timeout = c.OpenSearch.Timeout
 
 	// Создаем OpenSearch сервис
 	osService, err := opensearch.NewService(osConfig, log)

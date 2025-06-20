@@ -39,7 +39,7 @@ func (qb *QueryBuilder) BuildSearchQuery(filter *Filter) map[string]any {
 	}
 
 	if filter.DateFrom != nil || filter.DateTo != nil {
-		filterQueries = append(filterQueries, qb.buildPriceRangeFilter(filter.MinPrice, filter.MaxPrice))
+		filterQueries = append(filterQueries, qb.buildDateRangeFilter(filter.DateFrom, filter.DateTo))
 	}
 
 	if filter.Location != nil {

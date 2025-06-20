@@ -8,6 +8,8 @@ import (
 
 	"github.com/rx3lixir/event-service/internal/db"
 	"github.com/rx3lixir/event-service/internal/opensearch"
+	"github.com/rx3lixir/event-service/internal/opensearch/models"
+	"github.com/rx3lixir/event-service/internal/opensearch/search"
 	"github.com/rx3lixir/event-service/pkg/logger"
 )
 
@@ -76,7 +78,7 @@ func (m *Manager) CheckConsistency(ctx context.Context) (*CheckResult, error) {
 	result.TotalEventsDB = len(dbEvents)
 
 	// Получаем все события из OpenSearch
-	filter := opensearch.NewSearchFilter().SetPagination(0, 10000)
+	filter := search.NewFilter().WithPagination(0, 10000)
 	osResult, err := m.osService.SearchEvents(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get events from opensearch: %w", err)
@@ -90,7 +92,7 @@ func (m *Manager) CheckConsistency(ctx context.Context) (*CheckResult, error) {
 	}
 
 	// Создаем мапы для быстрого поиска
-	osEventsMap := make(map[int64]*opensearch.EventDocument)
+	osEventsMap := make(map[int64]*models.EventDocument)
 	for _, doc := range osResult.Events {
 		osEventsMap[doc.ID] = doc
 	}
@@ -154,9 +156,9 @@ func (m *Manager) CheckEventConsistency(ctx context.Context, eventID int64) (*Ch
 	dbEvent, err := m.store.GetEventByID(ctx, eventID)
 	if err != nil {
 		// Если события нет в БД, проверяем OS
-		filter := opensearch.NewSearchFilter().
-			SetQuery(fmt.Sprintf("id:%d", eventID)).
-			SetPagination(0, 1)
+		filter := search.NewFilter().
+			WithQuery(fmt.Sprintf("id:%d", eventID)).
+			WithPagination(0, 1)
 
 		osResult, osErr := m.osService.SearchEvents(ctx, filter)
 		if osErr == nil && osResult.Total > 0 {
@@ -172,9 +174,9 @@ func (m *Manager) CheckEventConsistency(ctx context.Context, eventID int64) (*Ch
 	result.TotalEventsDB = 1
 
 	// Получаем событие из OS
-	filter := opensearch.NewSearchFilter().
-		SetQuery(fmt.Sprintf("id:%d", eventID)).
-		SetPagination(0, 1)
+	filter := search.NewFilter().
+		WithQuery(fmt.Sprintf("id:%d", eventID)).
+		WithPagination(0, 1)
 
 	osResult, err := m.osService.SearchEvents(ctx, filter)
 	if err != nil {
@@ -271,7 +273,7 @@ func (m *Manager) RepairInconsistencies(ctx context.Context, result *CheckResult
 }
 
 // compareEvent сравнивает данные события из БД и OS
-func (m *Manager) compareEvent(dbEvent *db.Event, osDoc *opensearch.EventDocument) []EventMismatch {
+func (m *Manager) compareEvent(dbEvent *db.Event, osDoc *models.EventDocument) []EventMismatch {
 	var mismatches []EventMismatch
 
 	// Сравниваем основные поля

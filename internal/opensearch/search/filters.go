@@ -49,7 +49,7 @@ func (f *Filter) WithCategories(categoryIDs ...int64) *Filter {
 
 func (f *Filter) WithPriceRange(min, max *float32) *Filter {
 	f.MinPrice = min
-	f.MinPrice = max
+	f.MaxPrice = max
 	return f
 }
 

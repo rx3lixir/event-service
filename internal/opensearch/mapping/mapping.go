@@ -10,6 +10,7 @@ import (
 	"github.com/rx3lixir/event-service/pkg/logger"
 )
 
+//go:embed events.json
 var mappingFiles embed.FS
 
 type Manager struct {

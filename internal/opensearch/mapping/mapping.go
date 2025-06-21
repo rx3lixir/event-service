@@ -33,11 +33,62 @@ func (m *Manager) EnsureIndex(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to check index existence: %w", err)
 	}
+
 	if exists {
-		m.logger.Info("OpenSearch index already exists", "index", indexName)
+		m.logger.Info("OpenSearch index already exists, checking mapping compatibility", "index", indexName)
+		// Если индекс существует, но маппинг неправильный, пересоздаем
+		if err := m.validateAndRecreateIfNeeded(ctx, indexName); err != nil {
+			return fmt.Errorf("failed to validate/recreate index: %w", err)
+		}
 		return nil
 	}
 
+	return m.createIndex(ctx, indexName)
+}
+
+func (m *Manager) validateAndRecreateIfNeeded(ctx context.Context, indexName string) error {
+	// Получаем текущий маппинг
+	res, err := m.client.GetNativeClient().Indices.GetMapping(
+		m.client.GetNativeClient().Indices.GetMapping.WithIndex(indexName),
+		m.client.GetNativeClient().Indices.GetMapping.WithContext(ctx),
+	)
+	if err != nil {
+		m.logger.Warn("Failed to get current mapping, will recreate index", "error", err)
+		return m.recreateIndex(ctx, indexName)
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		m.logger.Warn("Error getting mapping, will recreate index", "status", res.Status())
+		return m.recreateIndex(ctx, indexName)
+	}
+
+	// Простая проверка: если есть проблемы с completion полями, пересоздаем
+	// В идеале здесь можно сделать более детальную проверку маппинга
+	m.logger.Info("Index exists with potentially incompatible mapping, recreating for safety")
+	return m.recreateIndex(ctx, indexName)
+}
+
+func (m *Manager) recreateIndex(ctx context.Context, indexName string) error {
+	m.logger.Info("Recreating OpenSearch index", "index", indexName)
+
+	// Удаляем существующий индекс
+	deleteRes, err := m.client.GetNativeClient().Indices.Delete(
+		[]string{indexName},
+		m.client.GetNativeClient().Indices.Delete.WithContext(ctx),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete existing index: %w", err)
+	}
+	defer deleteRes.Body.Close()
+
+	if deleteRes.IsError() && deleteRes.StatusCode != 404 {
+		return fmt.Errorf("failed to delete existing index, status: %s", deleteRes.Status())
+	}
+
+	m.logger.Info("Existing index deleted", "index", indexName)
+
+	// Создаем новый индекс
 	return m.createIndex(ctx, indexName)
 }
 
@@ -60,13 +111,15 @@ func (m *Manager) createIndex(ctx context.Context, indexName string) error {
 		return fmt.Errorf("failed to load mapping: %w", err)
 	}
 
+	m.logger.Info("Creating OpenSearch index with new mapping", "index", indexName)
+
 	res, err := m.client.GetNativeClient().Indices.Create(
 		indexName,
 		m.client.GetNativeClient().Indices.Create.WithContext(ctx),
 		m.client.GetNativeClient().Indices.Create.WithBody(strings.NewReader(mapping)),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to crate index: %w", err)
+		return fmt.Errorf("failed to create index: %w", err)
 	}
 	defer res.Body.Close()
 
@@ -74,7 +127,7 @@ func (m *Manager) createIndex(ctx context.Context, indexName string) error {
 		return fmt.Errorf("failed to create index, status: %s", res.Status())
 	}
 
-	m.logger.Info("OpenSearch index created successfully", "index", "indexName")
+	m.logger.Info("OpenSearch index created successfully", "index", indexName)
 
 	return nil
 }

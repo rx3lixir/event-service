@@ -45,19 +45,6 @@ func (e *EventDocument) PrepareForIndex() map[string]any {
 		"updated_at":  e.UpdatedAt,
 	}
 
-	// Добавляем данные для completion suggester
-	doc["name.completion"] = map[string]any{
-		"input":  []string{e.Name},
-		"weight": 10,
-	}
-
-	if e.Location != "" {
-		doc["location.completion"] = map[string]any{
-			"input":  []string{e.Location},
-			"weight": 5,
-		}
-	}
-
 	return doc
 }
 

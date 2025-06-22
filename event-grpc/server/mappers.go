@@ -8,6 +8,7 @@ import (
 	"github.com/rx3lixir/event-service/internal/db"
 	"github.com/rx3lixir/event-service/internal/opensearch/models"
 	"github.com/rx3lixir/event-service/internal/opensearch/search"
+	"github.com/rx3lixir/event-service/internal/opensearch/suggestions"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -374,6 +375,87 @@ func DBCategoriesToProtoList(categories []*db.Category) []*eventPb.CategoryRes {
 	}
 
 	return protoCategories
+}
+
+// ============================================================================
+// SUGGESTIONS - МАППЕРЫ ИЗ PROTO В OPENSEARCH
+// ============================================================================
+
+// ProtoToSuggestionRequest конвертирует SuggestionReq из gRPC в suggestions.Request
+func ProtoToSuggestionRequest(req *eventPb.SuggestionReq) *suggestions.Request {
+	if req == nil {
+		return &suggestions.Request{
+			Query:      "",
+			MaxResults: 10,
+			Fields:     []string{"name", "location"},
+		}
+	}
+
+	maxResults := int(req.GetMaxResults())
+	if maxResults <= 0 {
+		maxResults = 10
+	}
+
+	fields := req.GetFields()
+	if len(fields) == 0 {
+		fields = []string{"name", "location"}
+	}
+
+	return &suggestions.Request{
+		Query:      req.GetQuery(),
+		MaxResults: maxResults,
+		Fields:     fields,
+	}
+}
+
+// ============================================================================
+// SUGGESTIONS - МАППЕРЫ ИЗ OPENSEARCH В PROTO
+// ============================================================================
+
+// SuggestionResponseToProto конвертирует suggestions.Response в SuggestionRes для gRPC ответа
+func SuggestionResponseToProto(response *suggestions.Response) *eventPb.SuggestionRes {
+	if response == nil {
+		return &eventPb.SuggestionRes{
+			Suggestions: []*eventPb.SuggestionItem{},
+			Query:       "",
+			Total:       0,
+		}
+	}
+
+	protoSuggestions := make([]*eventPb.SuggestionItem, 0, len(response.Suggestions))
+	for _, suggestion := range response.Suggestions {
+		protoSuggestions = append(protoSuggestions, SuggestionToProto(&suggestion))
+	}
+
+	return &eventPb.SuggestionRes{
+		Suggestions: protoSuggestions,
+		Query:       response.Query,
+		Total:       int32(response.Total),
+	}
+}
+
+// SuggestionToProto конвертирует одно предложение в proto формат
+func SuggestionToProto(suggestion *suggestions.Suggestion) *eventPb.SuggestionItem {
+	if suggestion == nil {
+		return &eventPb.SuggestionItem{}
+	}
+
+	protoSuggestion := &eventPb.SuggestionItem{
+		Text:  suggestion.Text,
+		Score: suggestion.Score,
+		Type:  suggestion.Type,
+	}
+
+	// Опциональные поля
+	if suggestion.Category != "" {
+		protoSuggestion.Category = &suggestion.Category
+	}
+
+	if suggestion.EventID != nil {
+		protoSuggestion.EventId = suggestion.EventID
+	}
+
+	return protoSuggestion
 }
 
 // ============================================================================

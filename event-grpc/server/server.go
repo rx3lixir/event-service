@@ -29,6 +29,67 @@ func NewServer(storer *db.PostgresStore, esService *opensearch.Service, log logg
 	}
 }
 
+// GetSuggestions возвращает предложения для автокомплита
+func (s *Server) GetSuggestions(ctx context.Context, req *eventPb.SuggestionReq) (*eventPb.SuggestionRes, error) {
+	s.log.Info("starting get suggestions",
+		"method", "GetSuggestions",
+		"query", req.GetQuery(),
+		"max_results", req.GetMaxResults(),
+		"fields", req.GetFields(),
+	)
+
+	// Валидация запроса
+	if err := validateSuggestionReq(req); err != nil {
+		s.log.Error("invalid suggestion request",
+			"method", "GetSuggestions",
+			"error", err,
+			"query", req.GetQuery(),
+		)
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// Конвертируем proto запрос в suggestions.Request
+	suggestionReq := ProtoToSuggestionRequest(req)
+
+	// Получаем предложения из OpenSearch
+	suggestions, err := s.esService.GetSuggestions(ctx, suggestionReq)
+	if err != nil {
+		s.log.Error("failed to get suggestions from OpenSearch",
+			"method", "GetSuggestions",
+			"query", req.GetQuery(),
+			"error", err,
+		)
+		return nil, status.Error(codes.Internal, "failed to get suggestions")
+	}
+
+	s.log.Info("suggestions retrieved successfully",
+		"method", "GetSuggestions",
+		"query", req.GetQuery(),
+		"suggestions_count", len(suggestions.Suggestions),
+		"total", suggestions.Total,
+	)
+
+	// Конвертируем ответ в proto формат
+	return SuggestionResponseToProto(suggestions), nil
+}
+
+// validateSuggestionReq проверяет корректность запроса на получение предложений
+func validateSuggestionReq(req *eventPb.SuggestionReq) error {
+	if req.GetQuery() == "" {
+		return errors.New("query is required")
+	}
+
+	if len(req.GetQuery()) < 2 {
+		return errors.New("query must be at least 2 characters long")
+	}
+
+	if req.GetMaxResults() > 50 {
+		return errors.New("max_results cannot exceed 50")
+	}
+
+	return nil
+}
+
 // CreateEvent создает новое событие и индексирует его в OpenSearch.
 func (s *Server) CreateEvent(ctx context.Context, req *eventPb.CreateEventReq) (*eventPb.EventRes, error) {
 	s.log.Info("CreateEvent request received",
@@ -108,8 +169,7 @@ func (s *Server) GetEvent(ctx context.Context, req *eventPb.GetEventReq) (*event
 }
 
 // ListEvents получает список событий.
-// Если есть поисковый запрос (search_text), использует OpenSearch.
-// Иначе использует PostgreSQL с фильтрами.
+// Если есть поисковый запрос (search_text), использует OpenSearch. Иначе использует PostgreSQL с фильтрами.
 func (s *Server) ListEvents(ctx context.Context, req *eventPb.ListEventsReq) (*eventPb.ListEventsRes, error) {
 	s.log.Info("starting list events",
 		"method", "ListEvents",

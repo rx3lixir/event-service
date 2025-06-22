@@ -32,8 +32,15 @@ func (s *Searcher) SearchEvents(ctx context.Context, filter *Filter) (*models.Se
 		filter = NewFilter()
 	}
 
-	// Строим поисковый запрос
-	query := s.queryBuilder.BuildSearchQuery(filter)
+	// Используем улучшенный запрос с релевантностью для поисковых запросов
+	var query map[string]any
+	if filter.Query != "" {
+		query = s.queryBuilder.BuildSearchQueryWithRelevanceSort(filter)
+		s.logger.Debug("Using relevance-based search for query", "query", filter.Query)
+	} else {
+		query = s.queryBuilder.BuildSearchQuery(filter)
+		s.logger.Debug("Using standard search without query")
+	}
 
 	// Сериализуем запрос
 	queryBody, err := json.Marshal(query)
@@ -42,8 +49,10 @@ func (s *Searcher) SearchEvents(ctx context.Context, filter *Filter) (*models.Se
 	}
 
 	s.logger.Debug("Executing OpenSearch query",
-		"query", string(queryBody),
+		"query_text", filter.Query,
 		"index", s.client.GetIndexName(),
+		"from", filter.From,
+		"size", filter.Size,
 	)
 
 	// Выполняем поиск
@@ -52,6 +61,7 @@ func (s *Searcher) SearchEvents(ctx context.Context, filter *Filter) (*models.Se
 		s.client.GetNativeClient().Search.WithContext(ctx),
 		s.client.GetNativeClient().Search.WithIndex(s.client.GetIndexName()),
 		s.client.GetNativeClient().Search.WithBody(bytes.NewReader(queryBody)),
+		s.client.GetNativeClient().Search.WithTrackTotalHits(true), // Важно для точного подсчета
 	)
 	searchTime := time.Since(start)
 
@@ -61,6 +71,13 @@ func (s *Searcher) SearchEvents(ctx context.Context, filter *Filter) (*models.Se
 	defer res.Body.Close()
 
 	if res.IsError() {
+		// Читаем тело ошибки для диагностики
+		body, _ := io.ReadAll(res.Body)
+		s.logger.Error("OpenSearch query failed",
+			"status", res.Status(),
+			"error_body", string(body),
+			"query", string(queryBody),
+		)
 		return nil, fmt.Errorf("search failed with status: %s", res.Status())
 	}
 
@@ -72,13 +89,25 @@ func (s *Searcher) SearchEvents(ctx context.Context, filter *Filter) (*models.Se
 
 	searchResult.SearchTime = searchTime.String()
 
+	// Логируем результаты с деталями
 	s.logger.Info("Search completed",
+		"query", filter.Query,
 		"total_found", searchResult.Total,
 		"returned", len(searchResult.Events),
 		"search_time", searchTime,
 		"max_score", searchResult.MaxScore,
 		"has_query", filter.Query != "",
+		"categories", filter.CategoryIDs,
 	)
+
+	// Добавим дебаг логи для первых результатов
+	if filter.Query != "" && len(searchResult.Events) > 0 {
+		s.logger.Debug("Top search results",
+			"query", filter.Query,
+			"first_result", searchResult.Events[0].Name,
+			"first_score", s.getEventScore(searchResult.Events[0]),
+		)
+	}
 
 	return searchResult, nil
 }
@@ -97,14 +126,35 @@ func (s *Searcher) parseSearchResponse(body io.Reader) (*models.SearchResult, er
 		} `json:"hits"`
 	}
 
-	if err := json.NewDecoder(body).Decode(&response); err != nil {
+	// Сохраняем тело ответа для возможной диагностики
+	bodyBytes, err := io.ReadAll(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if err := json.Unmarshal(bodyBytes, &response); err != nil {
+		s.logger.Error("Failed to parse OpenSearch response",
+			"error", err,
+			"response_body", string(bodyBytes),
+		)
 		return nil, fmt.Errorf("failed to decode search response: %w", err)
 	}
 
 	// Формируем результат
 	events := make([]*models.EventDocument, 0, len(response.Hits.Hits))
 	for _, hit := range response.Hits.Hits {
-		events = append(events, &hit.Source)
+		// Сохраняем score в событии для отладки
+		event := hit.Source
+		events = append(events, &event)
+
+		// Логируем score для отладки
+		if hit.Score != nil {
+			s.logger.Debug("Event found",
+				"name", event.Name,
+				"score", *hit.Score,
+				"id", event.ID,
+			)
+		}
 	}
 
 	return &models.SearchResult{
@@ -112,6 +162,13 @@ func (s *Searcher) parseSearchResponse(body io.Reader) (*models.SearchResult, er
 		Total:    response.Hits.Total.Value,
 		MaxScore: response.Hits.MaxScore,
 	}, nil
+}
+
+// Вспомогательный метод для получения score события (для отладки)
+func (s *Searcher) getEventScore(event *models.EventDocument) string {
+	// В реальности score не сохраняется в EventDocument
+	// Это только для логирования, можно убрать в продакшене
+	return "unknown"
 }
 
 // CountEvents возвращает только количество найденных документов

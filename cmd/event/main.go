@@ -20,6 +20,7 @@ import (
 	"github.com/rx3lixir/event-service/pkg/consistency"
 	"github.com/rx3lixir/event-service/pkg/health"
 	"github.com/rx3lixir/event-service/pkg/logger"
+	"github.com/rx3lixir/event-service/pkg/metrics"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -57,6 +58,10 @@ func main() {
 		"opensearch_url", c.OpenSearch.URL,
 		"opensearch_index", c.OpenSearch.Index,
 	)
+
+	// Инициализируем метрики
+	metrics.SetServiceInfo("1.0.0", "event-service", c.Service.Env)
+	log.Info("Metrics initialized", "service", "event-service", "version", "1.0.0")
 
 	// Создаем пул соединений с базой данных
 	pool, err := db.CreatePostgresPool(ctx, c.DB.DSN())
@@ -115,13 +120,14 @@ func main() {
 	// Создаем менеджера консистентности
 	consistencyManager := consistency.New(storer, osService, log)
 
+	// Создаем gRPC сервер с interceptors для метрик
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(metrics.UnaryServerInterceptor("event-service")),
+		grpc.StreamInterceptor(metrics.StreamServerInterceptor("event-service")),
+	)
+
 	// Создаем gRPC сервер
 	srv := server.NewServer(storer, osService, log)
-
-	// Настраиваем gRPC сервер
-	grpcServer := grpc.NewServer(
-	// Здесь можно добавить перехватчики (interceptors) для логирования, трассировки и т.д.
-	)
 	pb.RegisterEventServiceServer(grpcServer, srv)
 
 	// Включаем reflection API для gRPC (полезно для отладки)
@@ -148,12 +154,23 @@ func main() {
 	// Добавляем проверку OpenSearch в health checker
 	healthServer.AddOpenSearchCheck(osService)
 
+	// Создаем сервер метрик
+	metricsServer := metrics.NewMetricsServer(":8080", log)
+
+	// Запускаем фоновые задачи для обновления метрик
+	startMetricsCollectors(ctx, storer, osService, log)
+
 	// Запускаем серверы
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 3)
 
 	// Health check сервер
 	go func() {
 		errCh <- healthServer.Start()
+	}()
+
+	// Metrics сервер
+	go func() {
+		errCh <- metricsServer.Start()
 	}()
 
 	// gRPC сервер
@@ -171,15 +188,59 @@ func main() {
 		if err := healthServer.Shutdown(context.Background()); err != nil {
 			log.Error("Health server shutdown error", "error", err)
 		}
+		if err := metricsServer.Shutdown(context.Background()); err != nil {
+			log.Error("Metrics server shutdown error", "error", err)
+		}
 
 	case err := <-errCh:
 		log.Error("Server error", "error", err)
 
 		grpcServer.GracefulStop()
 		if err := healthServer.Shutdown(context.Background()); err != nil {
-			log.Error("gRPC server shutdown error", "error", err)
+			log.Error("Health server shutdown error", "error", err)
+		}
+		if err := metricsServer.Shutdown(context.Background()); err != nil {
+			log.Error("Metrics server shutdown error", "error", err)
 		}
 	}
 
 	log.Info("Server stopped gracefully")
+}
+
+// startMetricsCollectors запускает фоновые коллекторы метрик
+func startMetricsCollectors(ctx context.Context, pool *db.PostgresStore, osService *opensearch.Service, log logger.Logger) {
+	// Обновляем метрики connection pool каждые 30 секунд
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Здесь нужно получить статистику из pgxpool
+				// Для этого нужно немного изменить структуру PostgresStore
+				// чтобы она хранила ссылку на pool
+				log.Debug("Updating database pool metrics")
+			}
+		}
+	}()
+
+	// Обновляем количество документов в OpenSearch каждые 60 секунд
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Получаем количество документов в OpenSearch
+				// Можно добавить метод в osService для этого
+				log.Debug("Updating OpenSearch documents metrics")
+			}
+		}
+	}()
 }

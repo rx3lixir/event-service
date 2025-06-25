@@ -250,8 +250,17 @@ func (s *Server) listEventsWithPostgreSQL(ctx context.Context, req *eventPb.List
 	var events []*db.Event
 	var totalCount *int64
 
+	includeCount := req.GetIncludeCount()
+
+	s.log.Debug("PostgreSQL query parameters",
+		"include_count", includeCount,
+		"limit", filter.GetLimit(),
+		"offset", filter.GetOffset(),
+		"has_filters", !filter.IsEmpty(),
+	)
+
 	// Если клиент запросил общее кол-во событий - считаем
-	if req.GetIncludeCount() {
+	if includeCount {
 		eventsResult, count, err := s.storer.GetEventsWithFilterAndCount(ctx, filter)
 		if err != nil {
 			s.log.Error("failed to list events with filter and count",
@@ -268,6 +277,8 @@ func (s *Server) listEventsWithPostgreSQL(ctx context.Context, req *eventPb.List
 			"method", "ListEvents",
 			"events_count", len(events),
 			"total_count", count,
+			"limit", filter.GetLimit(),
+			"offset", filter.GetOffset(),
 			"has_filters", !filter.IsEmpty(),
 		)
 	} else {
@@ -286,6 +297,8 @@ func (s *Server) listEventsWithPostgreSQL(ctx context.Context, req *eventPb.List
 		s.log.Info("PostgreSQL events retrieved successfully",
 			"method", "ListEvents",
 			"events_count", len(events),
+			"limit", filter.GetLimit(),
+			"offset", filter.GetOffset(),
 			"has_filters", !filter.IsEmpty(),
 		)
 	}

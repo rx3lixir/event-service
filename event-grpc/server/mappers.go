@@ -65,7 +65,7 @@ func ProtoToEventFilter(req *eventPb.ListEventsReq) (*db.EventFilter, error) {
 
 		// Устанавливаем значения по умолчанию
 		if limit == 0 {
-			limit = 100 // Значение по умолчанию
+			limit = 3 // Значение по умолчанию
 		}
 		if offset == 0 && req.Offset == nil {
 			offset = 0 // Явно устанавливаем 0, если offset не был передан
@@ -145,7 +145,7 @@ func ProtoToOpenSearchFilter(req *eventPb.ListEventsReq) (*search.Filter, error)
 		offset := int(req.GetOffset())
 
 		if limit == 0 {
-			limit = 20 // Для OS используем меньший лимит по умолчанию
+			limit = 3 // Для OS используем меньший лимит по умолчанию
 		}
 		filter.WithPagination(offset, limit)
 	}

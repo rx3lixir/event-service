@@ -64,6 +64,7 @@ WORKDIR /app
 # Экспонируем порты (документационно)
 EXPOSE 9091
 EXPOSE 8081
+EXPOSE 8091
 
 # Health check на уровне Docker с ПРАВИЛЬНЫМ портом для event-service
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
